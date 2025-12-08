@@ -17,6 +17,8 @@ Send email alerts or digests when your RSS/Atom feeds update.
 
 ## Config File
 
+Note: The config file is auto-reloaded. There is no need to restart the service.
+
 ### Examples
 
 Minimal:
