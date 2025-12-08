@@ -19,6 +19,10 @@ Send email alerts or digests when your RSS/Atom feeds update.
 
 Note: The config file is auto-reloaded. There is no need to restart the service.
 
+### Import
+
+You can use [`opml-to-config.py`](./opml-to-config.py) to convert an OPML file to yaf2m config.
+
 ### Examples
 
 Minimal:
