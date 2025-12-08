@@ -1,0 +1,298 @@
+use blake3::{Hash, Hasher, hash};
+use chrono::TimeDelta;
+use color_eyre::eyre::eyre;
+use color_eyre::{Result, eyre::WrapErr};
+use lettre::message::Mailbox;
+use minijinja::Value;
+use minijinja::value::merge_maps;
+use serde::Deserialize;
+use serde_with::{OneOrMany, serde_as, serde_conv};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+const DEFAULT_DIGEST: bool = false;
+const DEFAULT_ITEM_SUBJECT: &str = include_str!("templates/item-subject.txt");
+const DEFAULT_DIGEST_SUBJECT: &str = include_str!("templates/digest-subject.txt");
+const DEFAULT_ITEM_BODY: &str = include_str!("templates/item-body.html");
+const DEFAULT_DIGEST_BODY: &str = include_str!("templates/digest-body.html");
+const DEFAULT_UPDATE_KEY: &str = "item.id";
+const DEFAULT_INTERVAL: TimeDelta = TimeDelta::hours(1);
+const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_MAIL_PER_CHECK: usize = 5;
+const DEFAULT_SANITIZE: bool = true;
+
+#[derive(Debug)]
+pub struct Config {
+    pub feeds: Vec<FeedGroup>,
+}
+
+pub async fn load_config(path: &Path) -> Result<Config> {
+    let raw = tokio::fs::read_to_string(path)
+        .await
+        .wrap_err_with(|| format!("Failed to read config file at {}", path.display()))?;
+
+    let config: ConfigFile = toml::from_str(&raw)
+        .wrap_err_with(|| format!("Failed to parse config file at {}", path.display()))?;
+
+    let global = config.settings.with_default();
+
+    let feeds = config
+        .feeds
+        .into_iter()
+        .map(|fc| fc.resolve(&global))
+        .collect::<Vec<_>>();
+
+    let mut url_hash_set = HashSet::new();
+
+    for feed in &feeds {
+        if !url_hash_set.insert(feed.urls_hash) {
+            return Err(eyre!(
+                "Duplicate feed URLs detected in config file: {:?}",
+                feed.urls
+            ));
+        }
+    }
+
+    Ok(Config { feeds })
+}
+
+#[derive(Debug)]
+pub struct Settings {
+    pub to: Arc<[Mailbox]>,
+    pub cc: Arc<[Mailbox]>,
+    pub bcc: Arc<[Mailbox]>,
+    pub digest: bool,
+    pub item_subject: Arc<TemplateSource>,
+    pub digest_subject: Arc<TemplateSource>,
+    pub item_body: Arc<TemplateSource>,
+    pub digest_body: Arc<TemplateSource>,
+    pub template_args: Arc<Value>,
+    pub update_keys: Arc<[String]>,
+    pub interval: TimeDelta,
+    pub keep_old: TimeDelta,
+    pub timeout: Duration,
+    pub max_mail_per_check: usize,
+    pub sanitize: bool,
+}
+
+#[derive(Debug)]
+pub struct FeedGroup {
+    pub urls_hash: Hash,
+    pub urls: Vec<String>,
+    pub filter: Option<Filter>,
+    pub settings: Settings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TemplateSource {
+    Inline(String),
+    File(PathBuf),
+}
+
+impl TemplateSource {
+    pub fn load(&self) -> Result<Option<String>, minijinja::Error> {
+        Ok(Some(match self {
+            TemplateSource::Inline(s) => s.clone(),
+            TemplateSource::File(path) => std::fs::read_to_string(path).map_err(|e| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!("failed to read template at {}", path.display()),
+                )
+                .with_source(e)
+            })?,
+        }))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Filter {
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    TitleRegex(String),
+    BodyRegex(String),
+    JinjaExpr(String),
+}
+
+#[serde_as]
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct OptionalSettings {
+    #[serde_as(as = "Option<OneOrMany<_>>")]
+    to: Option<Vec<Mailbox>>,
+    #[serde_as(as = "Option<OneOrMany<_>>")]
+    cc: Option<Vec<Mailbox>>,
+    #[serde_as(as = "Option<OneOrMany<_>>")]
+    bcc: Option<Vec<Mailbox>>,
+    digest: Option<bool>,
+    item_subject: Option<TemplateSource>,
+    digest_subject: Option<TemplateSource>,
+    item_body: Option<TemplateSource>,
+    digest_body: Option<TemplateSource>,
+    template_args: Option<HashMap<String, Value>>,
+    #[serde_as(as = "Option<OneOrMany<_>>")]
+    #[serde(alias = "update-key")]
+    update_keys: Option<Vec<String>>,
+    #[serde_as(as = "Option<HumanTimeDelta>")]
+    interval: Option<TimeDelta>,
+    #[serde_as(as = "Option<HumanTimeDelta>")]
+    keep_old: Option<TimeDelta>,
+    #[serde(default, with = "humantime_serde")]
+    timeout: Option<Duration>,
+    max_mail_per_check: Option<usize>,
+    sanitize: Option<bool>,
+}
+
+impl OptionalSettings {
+    fn with_default(self) -> Settings {
+        Settings {
+            to: self.to.unwrap_or_default().into(),
+            cc: self.cc.unwrap_or_default().into(),
+            bcc: self.bcc.unwrap_or_default().into(),
+            digest: self.digest.unwrap_or(DEFAULT_DIGEST),
+            item_subject: self
+                .item_subject
+                .unwrap_or(TemplateSource::Inline(DEFAULT_ITEM_SUBJECT.into()))
+                .into(),
+            digest_subject: self
+                .digest_subject
+                .unwrap_or(TemplateSource::Inline(DEFAULT_DIGEST_SUBJECT.into()))
+                .into(),
+            item_body: self
+                .item_body
+                .unwrap_or(TemplateSource::Inline(DEFAULT_ITEM_BODY.into()))
+                .into(),
+            digest_body: self
+                .digest_body
+                .unwrap_or(TemplateSource::Inline(DEFAULT_DIGEST_BODY.into()))
+                .into(),
+            template_args: Arc::new(self.template_args.unwrap_or_default().into()),
+            update_keys: self
+                .update_keys
+                .unwrap_or_else(|| vec![DEFAULT_UPDATE_KEY.to_string()])
+                .into(),
+            interval: self.interval.unwrap_or(DEFAULT_INTERVAL),
+            keep_old: self.keep_old.unwrap_or(DEFAULT_KEEP_OLD),
+            timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
+            max_mail_per_check: self
+                .max_mail_per_check
+                .unwrap_or(DEFAULT_MAX_MAIL_PER_CHECK),
+            sanitize: self.sanitize.unwrap_or(DEFAULT_SANITIZE),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ConfigFile {
+    #[serde(default)]
+    settings: OptionalSettings,
+    #[serde(default)]
+    feeds: Vec<FeedConfig>,
+}
+
+#[serde_as]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct FeedConfig {
+    #[serde_as(as = "OneOrMany<_>")]
+    #[serde(alias = "url")]
+    urls: Vec<String>,
+    #[serde(flatten)]
+    settings: OptionalSettings,
+    #[serde(default)]
+    filter: Option<Filter>,
+}
+
+impl FeedConfig {
+    fn resolve(self, global: &Settings) -> FeedGroup {
+        let urls = self.urls;
+        let mut hasher = Hasher::new();
+        for url in &urls {
+            hasher.update(hash(url.as_bytes()).as_bytes());
+        }
+        let urls_hash = hasher.finalize();
+        let to = pick(self.settings.to, &global.to);
+        let cc = pick(self.settings.cc, &global.cc);
+        let bcc = pick(self.settings.bcc, &global.bcc);
+        let digest = self.settings.digest.unwrap_or(global.digest);
+        let item_subject = pick(self.settings.item_subject, &global.item_subject);
+        let digest_subject = pick(self.settings.digest_subject, &global.digest_subject);
+        let item_body = pick(self.settings.item_body, &global.item_body);
+        let digest_body = pick(self.settings.digest_body, &global.digest_body);
+        let template_args = match self.settings.template_args {
+            Some(args) => merge_maps([args.into(), Value::clone(&global.template_args)]).into(),
+            None => Arc::clone(&global.template_args),
+        };
+        let update_keys = pick(self.settings.update_keys, &global.update_keys);
+        let interval = self.settings.interval.unwrap_or(global.interval);
+        let keep_old = self.settings.keep_old.unwrap_or(global.keep_old);
+        let timeout = self.settings.timeout.unwrap_or(global.timeout);
+        let max_mail_per_check = self
+            .settings
+            .max_mail_per_check
+            .unwrap_or(global.max_mail_per_check);
+        let sanitize = self.settings.sanitize.unwrap_or(global.sanitize);
+        FeedGroup {
+            urls_hash,
+            urls,
+            filter: self.filter,
+            settings: Settings {
+                to,
+                cc,
+                bcc,
+                digest,
+                item_subject,
+                digest_subject,
+                item_body,
+                digest_body,
+                template_args,
+                update_keys,
+                interval,
+                keep_old,
+                timeout,
+                max_mail_per_check,
+                sanitize,
+            },
+        }
+    }
+}
+
+serde_conv!(
+    HumanTimeDelta,
+    TimeDelta,
+    |td: &TimeDelta| {
+        match td.to_std() {
+            Ok(duration) => humantime::format_duration(duration).to_string(),
+            Err(_) => format!(
+                "-({})",
+                humantime::format_duration(
+                    td.abs()
+                        .to_std()
+                        .expect("abs TimeDelta should fit in std Duration")
+                )
+            ),
+        }
+    },
+    |s: String| -> Result<_> {
+        let duration = humantime::parse_duration(&s)?;
+        Ok(TimeDelta::from_std(duration)?)
+    }
+);
+
+fn pick<T, U>(local: Option<T>, global: &Arc<U>) -> Arc<U>
+where
+    Arc<U>: From<T>,
+    U: ?Sized,
+{
+    match local {
+        Some(owned) => Arc::from(owned),
+        None => Arc::clone(global),
+    }
+}

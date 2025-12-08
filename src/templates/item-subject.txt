@@ -1,0 +1,1 @@
+{% if item.title %}{% if feed.title %}{{ feed.title.content }}: {% endif %}{{ item.title.content }}{% else %}New item from {{ feed.title.content if feed.title else "feed" }}{% endif %}

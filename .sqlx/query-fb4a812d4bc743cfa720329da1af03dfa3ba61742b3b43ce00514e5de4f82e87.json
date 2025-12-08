@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE feed_groups SET fail_count = 0 WHERE urls_hash = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb4a812d4bc743cfa720329da1af03dfa3ba61742b3b43ce00514e5de4f82e87"
+}

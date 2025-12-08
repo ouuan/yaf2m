@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH upsert AS (\n            INSERT INTO feed_groups (urls_hash, last_check)\n            VALUES ($1, $2)\n            ON CONFLICT (urls_hash)\n            DO UPDATE SET last_check = $2\n                WHERE feed_groups.last_check < $3\n            RETURNING\n                (xmax = 0) AS new\n        )\n        SELECT\n            CASE\n                WHEN EXISTS (SELECT 1 FROM upsert WHERE new) THEN 'new'\n                WHEN EXISTS (SELECT 1 FROM upsert) THEN 'update'\n                ELSE 'wait'\n            END AS \"status!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "209c7bb10ccc33960ca79b9a30950a1e7e6339ced08cca088cbb64e415a952cd"
+}

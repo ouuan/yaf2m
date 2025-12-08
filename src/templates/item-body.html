@@ -1,0 +1,95 @@
+<div class="item-card" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; border: 1px solid #e5e5e5; border-radius: 0.5rem; padding: 1.125rem; margin: 1rem auto; background: #fff; max-width: 60rem;">
+  <div style="border-bottom: 1px solid #eee; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+    {% if feed.title %}
+    <div class="feed-title" style="color: #666; font-size: 1em; margin-bottom: 0.375rem;">
+      {% if feed.links %}
+        <a href="{{ feed.links[0].href }}" style="color: #666; text-decoration: none;">{{ feed.title.content }}</a>
+      {% else %}
+        {{ feed.title.content }}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <h1 style="margin: 0; font-size: 1.4em; line-height: 1.3;">
+      {% if item.links %}
+        <a href="{{ item.links[0].href }}" style="color: #1a0dab; text-decoration: none;">{{ item.title.content if item.title else "Untitled" }}</a>
+      {% else %}
+        {{ item.title.content if item.title else "Untitled" }}
+      {% endif %}
+    </h1>
+
+    <div class="meta" style="color: #666; font-size: 0.9em; margin: 0.625rem 0;">
+      {% set ts = item.published or item.updated %}
+      {% if ts %}
+        <span>{{ ts | datetimeformat(format="short", tz=template_args.tz or "UTC") }}</span>
+      {% endif %}
+      {% if item.authors %}
+        <span class="authors" style="font-style: italic;"> · {% for author in item.authors %}
+          {% if author.name == "author" and author.email %}
+            {% set display = author.email %}
+          {% else %}
+            {% set display = author.name %}
+          {% endif %}
+          {% if author.url %}<a href="{{ author.url }}">{{ display }}</a>{% else %}{{ display }}{% endif %}
+          {% if not loop.last %}, {% endif %}
+        {% endfor %}</span>
+      {% endif %}
+    </div>
+    {% if item.categories %}
+    <div class="categories" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
+      {% for cat in item.categories %}
+        {% if cat.scheme %}
+          <a href="{{ cat.scheme }}" class="category" style="display: inline-block; background: #e9ecef; padding: 0.125rem 0.375rem; border-radius: 0.1875rem; font-size: 0.8em; color: #1a73e8; text-decoration: none;">{{ cat.label if cat.label else cat.term }}</a>
+        {% else %}
+          <span class="category" style="display: inline-block; background: #e9ecef; padding: 0.125rem 0.375rem; border-radius: 0.1875rem; font-size: 0.8em; color: #555;">{{ cat.label if cat.label else cat.term }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="content" style="margin: 0.75rem 0;">
+    {% if item.content and item.content.body %}
+      {{ item.content.body | safe }}
+    {% elif item.summary %}
+      {{ item.summary.content | safe }}
+    {% endif %}
+  </div>
+
+  {% if item.media %}
+  {% for media in item.media %}
+  <div class="media" style="margin-top: 0.75rem; padding: 0.625rem; background: #f8f9fa; border-radius: 0.3125rem;">
+    {% if media.title %}
+      <div class="media-title" style="font-weight: bold; margin-bottom: 0.375rem;">{{ media.title.content }}</div>
+    {% endif %}
+    {% if media.description %}
+      <div>{{ media.description.content | safe }}</div>
+    {% endif %}
+    {% set show_thumbnails = true %}
+    {% if media.content %}
+      {% for content in media.content %}
+        {% if content.url %}
+          {% if content.content_type and "image/" in content.content_type %}
+            <img class="media-full" style="max-width: 100%; height: auto; margin: 0.5rem 0; border-radius: 0.25rem;" src="{{ content.url }}" alt="{{ media.title.content if media.title else 'Media' }}">
+            {% set show_thumbnails = false %}
+          {% else %}
+            {% if content.content_type and "video/" in content.content_type %}
+              <video controls><source src="{{ content.url }}" type="{{ content.content_type }}"><a href="{{ content.url }}">📎 Media</a> ({{ content.content_type }})</video>
+            {% elif content.content_type and "audio/" in content.content_type %}
+              <audio controls><source src="{{ content.url }}" type="{{ content.content_type }}"><a href="{{ content.url }}">📎 Media</a> ({{ content.content_type }})</audio>
+            {% else %}
+              <div><a href="{{ content.url }}">📎 Media</a>{% if content.content_type %} ({{ content.content_type }}){% endif %}</div>
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if show_thumbnails and media.thumbnails %}
+      {% for thumb in media.thumbnails %}
+        <img class="media-thumb" style="max-width: 10rem; max-height: 7.5rem; margin: 0.5rem 0; border-radius: 0.25rem;" src="{{ thumb.image.uri }}" alt="{{ thumb.image.title if thumb.image.title else 'Media' }}">
+      {% endfor %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

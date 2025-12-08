@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        CREATE TABLE IF NOT EXISTS feed_items (\n            id BIGSERIAL PRIMARY KEY,\n            urls_hash BYTEA NOT NULL REFERENCES feed_groups(urls_hash) ON DELETE CASCADE,\n            guid TEXT NOT NULL,\n            update_hash BYTEA NOT NULL,\n            last_seen TIMESTAMPTZ NOT NULL,\n            UNIQUE(urls_hash, guid, update_hash)\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f79cf09de70d60e9ec453b610a51a83f27b7fba35309d34538b9e8fd9d60031e"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM feed_items WHERE urls_hash = $1 AND last_seen < $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "99dabea5dc51a3692aa2ada7487411b048255ac6a9eca62fd4c434eceb40ed60"
+}
