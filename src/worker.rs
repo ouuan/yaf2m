@@ -87,7 +87,9 @@ impl Worker {
         let mut all_feeds = Vec::new();
 
         for url in &feed_group.urls {
-            let feed = fetch_feed(url, &feed_group.settings).await?;
+            let feed = fetch_feed(url, &feed_group.settings)
+                .await
+                .wrap_err_with(|| format!("failed to fetch feed from {url}"))?;
             all_feeds.push(feed);
         }
 

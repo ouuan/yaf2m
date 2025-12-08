@@ -32,7 +32,7 @@ pub async fn fetch_feed(url: &str, settings: &Settings) -> Result<FetchedFeed> {
         .timeout(settings.timeout)
         .send()
         .await
-        .wrap_err_with(|| format!("Failed to fetch feed from {}", url))?;
+        .wrap_err("Failed to fetch feed")?;
 
     let content = response
         .bytes()
