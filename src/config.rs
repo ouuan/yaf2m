@@ -5,6 +5,7 @@ use color_eyre::{Result, eyre::WrapErr};
 use lettre::message::Mailbox;
 use minijinja::Value;
 use minijinja::value::merge_maps;
+use reqwest::header::HeaderMap;
 use serde::Deserialize;
 use serde_with::{OneOrMany, serde_as, serde_conv};
 use std::collections::HashMap;
@@ -77,6 +78,7 @@ pub struct Settings {
     pub timeout: Duration,
     pub max_mail_per_check: usize,
     pub sanitize: bool,
+    pub http_headers: Arc<HeaderMap>,
 }
 
 #[derive(Debug)]
@@ -147,6 +149,8 @@ struct OptionalSettings {
     timeout: Option<Duration>,
     max_mail_per_check: Option<usize>,
     sanitize: Option<bool>,
+    #[serde_as(as = "Option<AsHeaderMap>")]
+    http_headers: Option<HeaderMap>,
 }
 
 impl OptionalSettings {
@@ -184,6 +188,7 @@ impl OptionalSettings {
                 .max_mail_per_check
                 .unwrap_or(DEFAULT_MAX_MAIL_PER_CHECK),
             sanitize: self.sanitize.unwrap_or(DEFAULT_SANITIZE),
+            http_headers: self.http_headers.unwrap_or_default().into(),
         }
     }
 }
@@ -239,6 +244,7 @@ impl FeedConfig {
             .max_mail_per_check
             .unwrap_or(global.max_mail_per_check);
         let sanitize = self.settings.sanitize.unwrap_or(global.sanitize);
+        let http_headers = pick(self.settings.http_headers, &global.http_headers);
         FeedGroup {
             urls_hash,
             urls,
@@ -259,6 +265,7 @@ impl FeedConfig {
                 timeout,
                 max_mail_per_check,
                 sanitize,
+                http_headers,
             },
         }
     }
@@ -267,23 +274,18 @@ impl FeedConfig {
 serde_conv!(
     HumanTimeDelta,
     TimeDelta,
-    |td: &TimeDelta| {
-        match td.to_std() {
-            Ok(duration) => humantime::format_duration(duration).to_string(),
-            Err(_) => format!(
-                "-({})",
-                humantime::format_duration(
-                    td.abs()
-                        .to_std()
-                        .expect("abs TimeDelta should fit in std Duration")
-                )
-            ),
-        }
-    },
+    |_| { "serialization unimplemented" },
     |s: String| -> Result<_> {
         let duration = humantime::parse_duration(&s)?;
         Ok(TimeDelta::from_std(duration)?)
     }
+);
+
+serde_conv!(
+    AsHeaderMap,
+    HeaderMap,
+    |_| { "serialization unimplemented" },
+    |map: HashMap<String, String>| HeaderMap::try_from(&map)
 );
 
 fn pick<T, U>(local: Option<T>, global: &Arc<U>) -> Arc<U>

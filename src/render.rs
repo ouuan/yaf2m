@@ -247,6 +247,7 @@ mod tests {
                 timeout: Duration::from_secs(30),
                 max_mail_per_check: 5,
                 sanitize: true,
+                http_headers: Default::default(),
             },
         }
     }

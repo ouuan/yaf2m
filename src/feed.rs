@@ -30,6 +30,7 @@ pub async fn fetch_feed(url: &str, settings: &Settings) -> Result<FetchedFeed> {
     let response = client
         .get(url)
         .timeout(settings.timeout)
+        .headers(settings.http_headers.as_ref().clone())
         .send()
         .await
         .wrap_err("Failed to fetch feed")?;
