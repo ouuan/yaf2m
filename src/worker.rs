@@ -4,10 +4,11 @@ use crate::email::{Mail, Mailer, send_email_with_backoff};
 use crate::feed::fetch_feed;
 use crate::render::{Renderer, TemplateName};
 use color_eyre::Result;
+use color_eyre::eyre::WrapErr;
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::task::JoinSet;
 
 pub struct Worker {
@@ -17,20 +18,34 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new<P: Into<PathBuf>>(pool: PgPool, config_path: P, mailer: Mailer) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new<P: Into<PathBuf>>(pool: PgPool, config_path: P, mailer: Mailer) -> Self {
+        Self {
             pool,
             config_path: config_path.into(),
             mailer,
-        })
+        }
     }
 
-    pub async fn run(this: Arc<Self>) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let this = Arc::new(self);
+        let mut feeds = Vec::new();
+        let mut last_modified = SystemTime::UNIX_EPOCH;
+
         loop {
-            let config = load_config(&this.config_path).await?;
+            let modified = tokio::fs::metadata(&this.config_path)
+                .await
+                .wrap_err("failed to get config file metadata")?
+                .modified()?;
+            if modified != last_modified {
+                log::info!("Config file modified, reloading");
+                let config = load_config(&this.config_path).await?;
+                feeds = config.feeds.into_iter().map(Arc::new).collect();
+                last_modified = modified;
+            }
 
             let mut set = JoinSet::new();
-            for feed in config.feeds {
+
+            for feed in feeds.iter().map(Arc::clone) {
                 let worker = Arc::clone(&this);
                 set.spawn(async move {
                     if let Err(e) = worker.process_feed(&feed).await {

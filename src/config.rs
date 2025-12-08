@@ -25,7 +25,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MAIL_PER_CHECK: usize = 5;
 const DEFAULT_SANITIZE: bool = true;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Config {
     pub feeds: Vec<FeedGroup>,
 }

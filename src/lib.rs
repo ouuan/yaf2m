@@ -34,6 +34,5 @@ pub async fn run() -> Result<()> {
 
     let mailer = Mailer { from, transport };
 
-    let worker = Worker::new(pool, config_path, mailer);
-    Worker::run(worker).await
+    Worker::new(pool, config_path, mailer).run().await
 }
