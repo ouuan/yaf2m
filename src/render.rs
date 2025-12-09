@@ -96,10 +96,11 @@ impl<'a> Renderer<'a> {
             let value = key
                 .eval(ctx)
                 .wrap_err("Failed to evaluate update key expression")?;
-            match value.as_bytes() {
-                Some(bytes) => hasher.update(bytes),
-                None => hasher.update(value.to_string().as_bytes()),
+            let hash = match value.as_bytes() {
+                Some(bytes) => blake3::hash(bytes),
+                None => blake3::hash(value.to_string().as_bytes()),
             };
+            hasher.update(hash.as_bytes());
         }
         Ok(hasher.finalize())
     }
