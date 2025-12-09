@@ -13,9 +13,9 @@ img { max-width: 100%; height: auto; }
       From:
       {% for feed in feeds %}
         {% if feed.links %}
-          <a href="{{ feed.links[0].href }}" style="color: #1a73e8; text-decoration: none;">{{ feed.title.content if feed.title else "Untitled Feed" }}</a>{% if not loop.last %}, {% endif %}
+          <a href="{{ feed.links[0].href }}" style="color: #1a73e8; text-decoration: none;">{{ feed.title.content if feed.title else feed.id }}</a>{% if not loop.last %}, {% endif %}
         {% else %}
-          {{ feed.title.content if feed.title else "Untitled Feed" }}{% if not loop.last %}, {% endif %}
+          {{ feed.title.content if feed.title else feed.id }}{% if not loop.last %}, {% endif %}
         {% endif %}
       {% endfor %}
     </div>
@@ -29,9 +29,9 @@ img { max-width: 100%; height: auto; }
       {% set feed = ctx.feed %}
       <div style="font-size: 0.9em; margin-bottom: 0.5rem; line-height: 1.4;">
         {% if item.links %}
-          <a href="{{ item.links[0].href }}" style="color: #1a0dab; text-decoration: none; font-weight: 500;">{{ item.title.content if item.title else "Untitled" }}</a>
+          <a href="{{ item.links[0].href }}" style="color: #1a0dab; text-decoration: none; font-weight: 500;">{{ item.title.content if item.title else item.id }}</a>
         {% else %}
-          <span style="font-weight: 500;">{{ item.title.content if item.title else "Untitled" }}</span>
+          <span style="font-weight: 500;">{{ item.title.content if item.title else item.id }}</span>
         {% endif %}
         <span style="color: #666;">
           {% set ts = item.published or item.updated %}
