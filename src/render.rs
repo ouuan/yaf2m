@@ -7,8 +7,8 @@ use minijinja_contrib::add_to_environment;
 use ouroboros::self_referencing;
 use regex::Regex;
 use serde::Serialize;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
-use strum::{AsRefStr, Display};
 
 #[self_referencing]
 pub struct Renderer<'a> {
@@ -21,13 +21,28 @@ pub struct Renderer<'a> {
     filter: Option<CompiledFilter<'this>>,
 }
 
-#[derive(AsRefStr, Display)]
-#[strum(serialize_all = "kebab-case")]
 pub enum TemplateName {
     ItemSubject,
     DigestSubject,
     ItemBody,
     DigestBody,
+}
+
+impl AsRef<str> for TemplateName {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::ItemSubject => "item-subject.txt",
+            Self::DigestSubject => "digest-subject.txt",
+            Self::ItemBody => "item-body.html",
+            Self::DigestBody => "digest-body.html",
+        }
+    }
+}
+
+impl Display for TemplateName {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.as_ref())
+    }
 }
 
 impl<'a> Renderer<'a> {
@@ -54,10 +69,10 @@ impl<'a> Renderer<'a> {
         };
 
         env.set_loader(move |name| match name {
-            "item-subject" => templates.item_subject.load(),
-            "digest-subject" => templates.digest_subject.load(),
-            "item-body" => templates.item_body.load(),
-            "digest-body" => templates.digest_body.load(),
+            "item-subject.txt" => templates.item_subject.load(),
+            "digest-subject.txt" => templates.digest_subject.load(),
+            "item-body.html" => templates.item_body.load(),
+            "digest-body.html" => templates.digest_body.load(),
             _ => Ok(None),
         });
 

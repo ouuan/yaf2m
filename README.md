@@ -113,6 +113,7 @@ and = [
     -   Context for single item: `{ feed => Feed, item => Entry }`, see [`feed_rs::model::Feed`](https://docs.rs/feed-rs/latest/feed_rs/model/struct.Feed.html) and [`feed_rs::model::Entry`](https://docs.rs/feed-rs/latest/feed_rs/model/struct.Entry.html).
     -   Context for digest: `{ feeds => [Feed], items => [{ feed => Feed, item => Entry }] }`, where `feeds` are all feeds in the group (no matter updated or not), and `items` are updated items.
     -   Custom args: `template-args`.
+    -   Can include each other, e.g. `{% include "item-body.html" %}`, `{% include "digest-subject.txt" %}`.
     -   More features: [`filters`](https://docs.rs/minijinja/latest/minijinja/filters/index.html), [`tests`](https://docs.rs/minijinja/latest/minijinja/tests/index.html), [`minijinja-contrib`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/), and a custom test `matches(regex)`.
 -   `template-args`: Custom args that are passed to the MiniJinja templates. Template args set on each feed are merged with the global setting. Args used by the default templates:   
     -   `tz`: timezone
