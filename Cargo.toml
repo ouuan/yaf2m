@@ -6,11 +6,12 @@ license = "Apache-2.0"
 description = "Yet Another Feed to Mail: Send email on RSS feed update."
 
 [dependencies]
+ammonia = "4.1.2"
 blake3 = "1.8.2"
 chrono = "0.4.42"
 color-eyre = "0.6.5"
 env_logger = "0.11.8"
-feed-rs = { version = "2.3.1", features = ["sanitize"] }
+feed-rs = "2.3.1"
 humantime = "2.3.0"
 humantime-serde = "1.1.1"
 lettre = { version = "0.11.19", default-features = false, features = ["builder", "pool", "smtp-transport", "serde", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
