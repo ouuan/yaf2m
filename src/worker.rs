@@ -139,7 +139,7 @@ impl Worker {
         if !new_items.is_empty() {
             let mails = if status == "new"
                 || feed_group.settings.digest
-                || new_items.len() > feed_group.settings.max_mail_per_check
+                || new_items.len() > feed_group.settings.max_mails_per_check
             {
                 let feeds = all_feeds
                     .iter()

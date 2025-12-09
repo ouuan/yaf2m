@@ -55,7 +55,7 @@ update-key = 'item.id'
 interval = '1h'
 keep-old = '1w'
 timeout = '30s'
-max-mail-per-check = 5
+max-mails-per-check = 5
 sanitize = true
 http-headers = {}
 
@@ -76,7 +76,7 @@ url = "https://blog.rust-lang.org/feed.xml"
 # interval = '1d'
 # keep-old = '2w'
 # timeout = '1m'
-# max-mail-per-check = 1
+# max-mails-per-check = 1
 # sanitize = false
 # http-headers.user-agent = "xxx"
 [[feeds.filter.or]]
@@ -111,7 +111,7 @@ and = [
 -   `interval`: Check feed update once per interval.
 -   `keep-old`: Prune old data in the database.
 -   `timeout`: Timeout when fetching the feed.
--   `max-mail-per-check`: Send digest if there are too many updates, even if `digest = false`.
+-   `max-mails-per-check`: Send digest if there are too many updates, even if `digest = false`.
 -   `sanitize`: Whether to sanitize HTML in feed contents or keep the HTML as it is.
 -   `http-headers`: HTTP header map when fetching the feed.
 

@@ -23,7 +23,7 @@ const DEFAULT_UPDATE_KEY: &str = "item.id";
 const DEFAULT_INTERVAL: TimeDelta = TimeDelta::hours(1);
 const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_MAX_MAIL_PER_CHECK: usize = 5;
+const DEFAULT_MAX_MAILS_PER_CHECK: usize = 5;
 const DEFAULT_SANITIZE: bool = true;
 
 #[derive(Debug, Default)]
@@ -76,7 +76,7 @@ pub struct Settings {
     pub interval: TimeDelta,
     pub keep_old: TimeDelta,
     pub timeout: Duration,
-    pub max_mail_per_check: usize,
+    pub max_mails_per_check: usize,
     pub sanitize: bool,
     pub http_headers: Arc<HeaderMap>,
 }
@@ -147,7 +147,8 @@ struct OptionalSettings {
     keep_old: Option<TimeDelta>,
     #[serde(default, with = "humantime_serde")]
     timeout: Option<Duration>,
-    max_mail_per_check: Option<usize>,
+    #[serde(alias = "max_mail_per_check")]
+    max_mails_per_check: Option<usize>,
     sanitize: Option<bool>,
     #[serde_as(as = "Option<AsHeaderMap>")]
     http_headers: Option<HeaderMap>,
@@ -184,9 +185,9 @@ impl OptionalSettings {
             interval: self.interval.unwrap_or(DEFAULT_INTERVAL),
             keep_old: self.keep_old.unwrap_or(DEFAULT_KEEP_OLD),
             timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
-            max_mail_per_check: self
-                .max_mail_per_check
-                .unwrap_or(DEFAULT_MAX_MAIL_PER_CHECK),
+            max_mails_per_check: self
+                .max_mails_per_check
+                .unwrap_or(DEFAULT_MAX_MAILS_PER_CHECK),
             sanitize: self.sanitize.unwrap_or(DEFAULT_SANITIZE),
             http_headers: self.http_headers.unwrap_or_default().into(),
         }
@@ -239,10 +240,10 @@ impl FeedConfig {
         let interval = self.settings.interval.unwrap_or(global.interval);
         let keep_old = self.settings.keep_old.unwrap_or(global.keep_old);
         let timeout = self.settings.timeout.unwrap_or(global.timeout);
-        let max_mail_per_check = self
+        let max_mails_per_check = self
             .settings
-            .max_mail_per_check
-            .unwrap_or(global.max_mail_per_check);
+            .max_mails_per_check
+            .unwrap_or(global.max_mails_per_check);
         let sanitize = self.settings.sanitize.unwrap_or(global.sanitize);
         let http_headers = pick(self.settings.http_headers, &global.http_headers);
         FeedGroup {
@@ -263,7 +264,7 @@ impl FeedConfig {
                 interval,
                 keep_old,
                 timeout,
-                max_mail_per_check,
+                max_mails_per_check,
                 sanitize,
                 http_headers,
             },

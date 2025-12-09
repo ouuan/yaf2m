@@ -246,7 +246,7 @@ mod tests {
                 interval: TimeDelta::hours(1),
                 keep_old: TimeDelta::weeks(1),
                 timeout: Duration::from_secs(30),
-                max_mail_per_check: 5,
+                max_mails_per_check: 5,
                 sanitize: true,
                 http_headers: Default::default(),
             },
