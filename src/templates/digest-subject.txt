@@ -1,1 +1,9 @@
-{% set feed_title = feeds[0].title.content if feeds[0].title else "Feed" %}[{{ now() | dateformat(format="short", tz=template_args.tz or "UTC") }}] {{ items | length }} new item{{ "s" if items | length > 1 else "" }} from {{ feed_title }}{% if feeds | length > 1 %} (+{{ feeds | length - 1 }}){% endif %}
+{%
+  set feed_title = (
+    template_args.group_title if template_args.group_title else (
+      (feeds[0].title.content if feeds[0].title else feeds[0].id) + (" (+%d)" | format(feeds | length - 1) if feeds | length > 1 else "")
+    )
+  )
+%}{%
+  set date = now() | dateformat(format="short", tz=template_args.tz or "UTC")
+%}[{{ date }}] {{ items | length }} new item{{ "s" if items | length > 1 else "" }} from {{ feed_title }}

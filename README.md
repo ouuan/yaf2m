@@ -104,7 +104,9 @@ and = [
     -   Context for digest: `{ feeds => [Feed], items => [{ feed => Feed, item => Entry }] }`, where `feeds` are all feeds in the group (no matter updated or not), and `items` are updated items.
     -   Custom args: `template-args`.
     -   More features: [`filters`](https://docs.rs/minijinja/latest/minijinja/filters/index.html), [`tests`](https://docs.rs/minijinja/latest/minijinja/tests/index.html), [`minijinja-contrib`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/), and a custom test `matches(regex)`.
--   `template-args`: Custom args that are passed to the MiniJinja templates. Template args set on each feed are merged with the global setting.
+-   `template-args`: Custom args that are passed to the MiniJinja templates. Template args set on each feed are merged with the global setting. Args used by the default templates:   
+    -   `tz`: timezone
+    -   `group_title`: used by the default `digest-subject` template to display the title for the entire feed group (useful when there are multiple URLs in a feed group)
 -   `update-keys`/`update-key`: Keys that are used to check whether a feed item is updated or not. Each key is a MiniJinja expression. This can be used to control whether to notify feed content update.
 -   `interval`: Check feed update once per interval.
 -   `keep-old`: Prune old data in the database.
