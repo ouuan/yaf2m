@@ -141,14 +141,18 @@ pub async fn delete_old_items(
     keep_old: TimeDelta,
 ) -> Result<()> {
     let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
-    sqlx::query!(
+    let result = sqlx::query!(
         "DELETE FROM feed_items WHERE urls_hash = $1 AND last_seen < $2",
         urls_hash.as_bytes(),
         cutoff
     )
     .execute(e)
     .await?;
-
+    log::debug!(
+        "Deleted {} items older than {}",
+        result.rows_affected(),
+        cutoff,
+    );
     Ok(())
 }
 

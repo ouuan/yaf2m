@@ -38,8 +38,8 @@ impl Worker {
                 .wrap_err("failed to get config file metadata")?
                 .modified()?;
             if modified != last_modified {
-                log::info!("Config file modified, reloading");
                 let config = load_config(&this.config_path).await?;
+                log::info!("Config file update reloaded");
                 feeds = config.feeds.into_iter().map(Arc::new).collect();
                 last_modified = modified;
             }
