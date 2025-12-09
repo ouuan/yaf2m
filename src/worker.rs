@@ -12,6 +12,7 @@ use minijinja::{Environment, render};
 use minijinja_contrib::add_to_environment;
 use serde::Serialize;
 use sqlx::PgPool;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -160,6 +161,10 @@ impl Worker {
             if new {
                 new_items.push(item);
             }
+        }
+
+        if feed_group.settings.sort_by_last_modified {
+            new_items.sort_by_key(|item| Reverse(item.item.updated.or(item.item.published)));
         }
 
         log::info!(

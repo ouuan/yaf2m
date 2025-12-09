@@ -70,6 +70,7 @@ keep-old = '1w'
 timeout = '30s'
 max-mails-per-check = 5
 sanitize = true
+sort-by-last-modified = false
 http-headers = {}
 
 [[feeds]]
@@ -91,6 +92,7 @@ url = "https://blog.rust-lang.org/feed.xml"
 # timeout = '1m'
 # max-mails-per-check = 1
 # sanitize = false
+# sort-by-last-modified = true
 # http-headers.user-agent = "xxx"
 [[feeds.filter.or]]
 title-regex = '^Announcing'
@@ -127,6 +129,7 @@ and = [
 -   `timeout`: Timeout when fetching the feed.
 -   `max-mails-per-check`: Send digest if there are too many updates, even if `digest = false`.
 -   `sanitize`: Whether to sanitize HTML in feed contents or keep the HTML as it is.
+-   `sort-by-last-modified`: Whether to sort items in a digest by their last modified time.
 -   `http-headers`: HTTP header map when fetching the feed.
 
 ---

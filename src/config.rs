@@ -25,6 +25,7 @@ const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MAILS_PER_CHECK: usize = 5;
 const DEFAULT_SANITIZE: bool = true;
+const DEFAULT_SORT_BY_LAST_MODIFIED: bool = false;
 
 #[derive(Debug)]
 pub struct Config {
@@ -84,6 +85,7 @@ pub struct Settings {
     pub timeout: Duration,
     pub max_mails_per_check: usize,
     pub sanitize: bool,
+    pub sort_by_last_modified: bool,
     pub http_headers: Arc<HeaderMap>,
 }
 
@@ -156,6 +158,7 @@ struct OptionalSettings {
     #[serde(alias = "max_mail_per_check")]
     max_mails_per_check: Option<usize>,
     sanitize: Option<bool>,
+    sort_by_last_modified: Option<bool>,
     #[serde_as(as = "Option<AsHeaderMap>")]
     http_headers: Option<HeaderMap>,
 }
@@ -195,6 +198,9 @@ impl OptionalSettings {
                 .max_mails_per_check
                 .unwrap_or(DEFAULT_MAX_MAILS_PER_CHECK),
             sanitize: self.sanitize.unwrap_or(DEFAULT_SANITIZE),
+            sort_by_last_modified: self
+                .sort_by_last_modified
+                .unwrap_or(DEFAULT_SORT_BY_LAST_MODIFIED),
             http_headers: self.http_headers.unwrap_or_default().into(),
         }
     }
@@ -255,6 +261,10 @@ impl FeedConfig {
             .max_mails_per_check
             .unwrap_or(global.max_mails_per_check);
         let sanitize = self.settings.sanitize.unwrap_or(global.sanitize);
+        let sort_by_last_modified = self
+            .settings
+            .sort_by_last_modified
+            .unwrap_or(global.sort_by_last_modified);
         let http_headers = pick(self.settings.http_headers, &global.http_headers);
         FeedGroup {
             urls_hash,
@@ -276,6 +286,7 @@ impl FeedConfig {
                 timeout,
                 max_mails_per_check,
                 sanitize,
+                sort_by_last_modified,
                 http_headers,
             },
         }
