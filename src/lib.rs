@@ -17,7 +17,7 @@ use crate::email::Mailer;
 
 pub async fn run() -> Result<()> {
     let config_path =
-        std::env::var("YAF2M_CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
+        std::env::var("YAF2M_CONFIG_PATH").unwrap_or_else(|_| "config/config.toml".to_string());
 
     let database_url =
         std::env::var("POSTGRES_URL").wrap_err("POSTGRES_URL environment variable not set")?;

@@ -10,7 +10,7 @@ Send email alerts or digests when your RSS/Atom feeds update.
 
 ## Environment Variables
 
--   `YAF2M_CONFIG_PATH`: path to the config file (default: `config.toml` in PWD).
+-   `YAF2M_CONFIG_PATH`: path to the config file (default: `config/config.toml`).
 -   `POSTGRES_URL`: database connection string; see [sqlx::postgres::PgConnectOptions](https://docs.rs/sqlx/latest/sqlx/postgres/struct.PgConnectOptions.html).
 -   `SMTP_FROM`: sender address, e.g. `"yaf2m" <yaf2m@example.com>`.
 -   `SMTP_URL`: SMTP transport URL; see [lettre::transport::smtp::SmtpTransport::from_url](https://docs.rs/lettre/latest/lettre/transport/smtp/struct.SmtpTransport.html#method.from_url).
