@@ -50,16 +50,16 @@ pub async fn fetch_feed(url: &str, settings: &Settings) -> Result<FetchedFeed> {
         let mut sanitizer = Sanitizer::new();
 
         let base = feed.links.first().map_or(&feed.id, |link| &link.href);
-        sanitizer.sanitize_text(&mut feed.title, base);
-        sanitizer.sanitize_text(&mut feed.description, base);
-        sanitizer.sanitize_text(&mut feed.rights, base);
+        sanitizer.sanitize_text(&mut feed.title, base, false);
+        sanitizer.sanitize_text(&mut feed.description, base, true);
+        sanitizer.sanitize_text(&mut feed.rights, base, false);
 
         for entry in &mut feed.entries {
             let base = entry.links.first().map_or(&entry.id, |link| &link.href);
-            sanitizer.sanitize_text(&mut entry.title, base);
+            sanitizer.sanitize_text(&mut entry.title, base, false);
             sanitizer.sanitize_content(&mut entry.content, base);
-            sanitizer.sanitize_text(&mut entry.summary, base);
-            sanitizer.sanitize_text(&mut entry.rights, base);
+            sanitizer.sanitize_text(&mut entry.summary, base, true);
+            sanitizer.sanitize_text(&mut entry.rights, base, false);
         }
     }
 
@@ -85,7 +85,7 @@ impl Sanitizer {
         Self(sanitizer)
     }
 
-    fn sanitize_text(&mut self, text: &mut Option<Text>, base: &str) {
+    fn sanitize_text(&mut self, text: &mut Option<Text>, base: &str, sanitize_plain_text: bool) {
         if let Some(text) = text {
             if text.content_type.subty() == "html" {
                 if let Some(src) = &text.src {
@@ -94,7 +94,7 @@ impl Sanitizer {
                     self.register_base(base);
                 }
                 text.content = self.0.clean(&text.content).to_string();
-            } else {
+            } else if sanitize_plain_text {
                 text.content = clean_text(&text.content);
             }
         }
