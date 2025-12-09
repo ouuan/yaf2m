@@ -104,25 +104,23 @@ impl Worker {
         // reverse back
         for item in all_feeds.iter().rev().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
-                log::trace!("Item filtered out: {:?}", item.item);
+                log::trace!(
+                    "Item filtered out:\n{}",
+                    render!("{{ item }}", item => item.item)
+                );
                 continue;
             }
 
             let update_hash = renderer.update_hash(item)?;
 
-            let new = db::upsert_and_check_item_new(
-                &mut *tx,
-                feed_group.urls_hash,
-                &item.item.id,
-                update_hash,
-            )
-            .await?;
+            let new =
+                db::upsert_and_check_item_new(&mut *tx, feed_group.urls_hash, update_hash).await?;
 
             log::trace!(
-                "Item {:?} with hash {} is new: {}",
-                item.item,
+                "hash: {}, new: {}, item:\n{}",
                 update_hash,
-                new
+                new,
+                render!("{{ item }}", item => item.item)
             );
 
             if new {
