@@ -86,7 +86,9 @@ impl Worker {
 
         let mut all_feeds = Vec::new();
 
-        for url in &feed_group.urls {
+        // reverse order to prioritize earlier URLs
+        // otherwise, if the feeds update during fetching, later URLs may override earlier ones
+        for url in feed_group.urls.iter().rev() {
             let feed = fetch_feed(url, &feed_group.settings)
                 .await
                 .wrap_err_with(|| format!("failed to fetch feed from {url}"))?;
@@ -95,7 +97,8 @@ impl Worker {
 
         let mut new_items = Vec::new();
 
-        for item in all_feeds.iter().flat_map(|feed| feed.borrow_items()) {
+        // reverse back
+        for item in all_feeds.iter().rev().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
                 continue;
             }
