@@ -17,3 +17,5 @@ jobs:
         with:
           push: true
           tags: ouuan/yaf2m:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
