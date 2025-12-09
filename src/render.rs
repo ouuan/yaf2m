@@ -344,8 +344,8 @@ mod tests {
 
         let expected = {
             let mut hasher = Hasher::new();
-            hasher.update(b"item-42");
-            hasher.update(b"feed-id");
+            hasher.update(hash(b"item-42").as_bytes());
+            hasher.update(hash(b"feed-id").as_bytes());
             hasher.finalize()
         };
 
