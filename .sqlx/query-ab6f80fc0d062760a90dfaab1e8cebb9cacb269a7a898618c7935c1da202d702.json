@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT urls_hash, error FROM failures WHERE fail_count >= 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "urls_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "error",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ab6f80fc0d062760a90dfaab1e8cebb9cacb269a7a898618c7935c1da202d702"
+}

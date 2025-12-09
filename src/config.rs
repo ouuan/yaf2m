@@ -28,6 +28,7 @@ const DEFAULT_SANITIZE: bool = true;
 
 #[derive(Debug)]
 pub struct Config {
+    pub error_report_to: Vec<Mailbox>,
     pub global_settings: Settings,
     pub feeds: Vec<FeedGroup>,
 }
@@ -60,6 +61,7 @@ pub async fn load_config(path: &Path) -> Result<Config> {
     }
 
     Ok(Config {
+        error_report_to: config.error_report_to,
         global_settings,
         feeds,
     })
@@ -198,9 +200,13 @@ impl OptionalSettings {
     }
 }
 
+#[serde_as]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct ConfigFile {
+    #[serde(default)]
+    #[serde_as(as = "OneOrMany<_>")]
+    error_report_to: Vec<Mailbox>,
     #[serde(default)]
     settings: OptionalSettings,
     #[serde(default)]

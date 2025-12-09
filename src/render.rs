@@ -1,7 +1,7 @@
 use crate::config::{FeedGroup, Filter, TemplateSource};
 use crate::feed::FeedItemContext;
 use blake3::{Hash, Hasher};
-use color_eyre::{Result, eyre::Context};
+use color_eyre::{Result, eyre::WrapErr};
 use minijinja::{Environment, Expression, Value};
 use minijinja_contrib::add_to_environment;
 use ouroboros::self_referencing;

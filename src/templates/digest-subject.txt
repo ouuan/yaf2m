@@ -6,4 +6,4 @@
   )
 %}{%
   set date = now() | dateformat(format="short", tz=template_args.tz or "UTC")
-%}[{{ date }}] {{ items | length }} new item{{ "s" if items | length > 1 else "" }} from {{ feed_title }}
+%}[{{ date }}] {{ items | length }} new item{{ items | pluralize }} from {{ feed_title }}

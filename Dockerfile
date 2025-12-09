@@ -6,8 +6,8 @@ COPY Cargo.* ./
 
 RUN mkdir src && touch src/lib.rs && cargo build --release
 
+COPY migrations migrations
 COPY .sqlx .sqlx
-
 COPY src src
 
 RUN touch src/lib.rs && cargo build --release

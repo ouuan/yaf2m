@@ -10,6 +10,7 @@ Send email alerts or digests when your RSS/Atom feeds update.
 - **Custom Update Keys**: Detect updates using traditional GUIDs or any custom content via MiniJinja expressions, allowing notification on any change you care about.
 - **Customizable Email Templates**: Use MiniJinja templates for email subject and body.
 - **Advanced Filtering**: Filter feed items using logical combinations (`and`, `or`, `not`), regular expressions, or MiniJinja expressions for fine-grained control.
+- **Notification On Error**: Send notifications when feeds are not working.
 - **HTML Sanitization**: Sanitize feed HTML content for safer emails.
 
 ## Quick Start
@@ -51,6 +52,8 @@ url = 'https://example.org/feed.atom'
 With default values:
 
 ```toml
+error-report-to = [] # error-report-to = "admin@example.com"
+
 [settings]
 to = []
 cc = []
@@ -133,6 +136,10 @@ and = [
     -   `title-regex` / `body-regex`: Regular expression match.
     -   `jinja-expr`: Evaluated as MiniJinja expression to see if it's true.
     -   `and: [..]` / `or: [..]` / `not: {..}`: Logic combination.
+
+---
+
+-   `error-report-to`: Error report recipients when feeds are not working.
 
 ## Security
 

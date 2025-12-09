@@ -1,43 +1,18 @@
 use crate::config::FeedGroup;
+use ammonia::clean_text;
 use blake3::Hash;
 use chrono::{DateTime, TimeDelta, Utc};
-use color_eyre::Result;
+use color_eyre::{
+    Result,
+    eyre::{Report, WrapErr},
+};
 use sqlx::{PgExecutor, PgPool};
 
 pub async fn init_db(pool: &PgPool) -> Result<()> {
-    let mut tx = pool.begin().await?;
-
-    sqlx::query!(
-        r#"
-        CREATE TABLE IF NOT EXISTS feed_groups (
-            urls_hash BYTEA PRIMARY KEY,
-            last_check TIMESTAMPTZ NOT NULL,
-            last_update TIMESTAMPTZ,
-            last_seen TIMESTAMPTZ NOT NULL,
-            fail_count INT NOT NULL DEFAULT 0
-        )
-        "#,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!(
-        r#"
-        CREATE TABLE IF NOT EXISTS feed_items (
-            id BIGSERIAL PRIMARY KEY,
-            urls_hash BYTEA NOT NULL REFERENCES feed_groups(urls_hash) ON DELETE CASCADE,
-            update_hash BYTEA NOT NULL,
-            last_seen TIMESTAMPTZ NOT NULL,
-            UNIQUE(urls_hash, update_hash)
-        )
-        "#,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    Ok(())
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .wrap_err("Failed to run database migrations")
 }
 
 pub async fn delete_old_groups(e: impl PgExecutor<'_>, keep_old: TimeDelta) -> Result<()> {
@@ -64,27 +39,12 @@ pub async fn touch_feed_group_last_seen(e: impl PgExecutor<'_>, urls_hash: Hash)
     Ok(())
 }
 
-pub async fn get_feed_group_fail_count(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<i32> {
-    let count = sqlx::query_scalar!(
-        "SELECT fail_count FROM feed_groups WHERE urls_hash = $1",
-        urls_hash.as_bytes(),
-    )
-    .fetch_optional(e)
-    .await?;
-    Ok(count.unwrap_or(0))
-}
-
 pub async fn try_check_feed_group(
     e: impl PgExecutor<'_>,
-    fail_count: i32,
     feed_config: &FeedGroup,
 ) -> Result<String> {
     let now = Utc::now();
-    let mut update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
-    if fail_count > 0 {
-        let wait = TimeDelta::minutes(1 << fail_count.min(12));
-        update_cutoff = saturating_sub_datetime(update_cutoff, wait);
-    }
+    let update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
 
     let status = sqlx::query_scalar!(
         r#"
@@ -112,29 +72,6 @@ pub async fn try_check_feed_group(
     .await?;
 
     Ok(status)
-}
-
-pub async fn increment_feed_group_fail_count(
-    e: impl PgExecutor<'_>,
-    urls_hash: Hash,
-) -> Result<()> {
-    sqlx::query!(
-        "UPDATE feed_groups SET fail_count = fail_count + 1 WHERE urls_hash = $1",
-        urls_hash.as_bytes(),
-    )
-    .execute(e)
-    .await?;
-    Ok(())
-}
-
-pub async fn reset_feed_group_fail_count(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
-    sqlx::query!(
-        "UPDATE feed_groups SET fail_count = 0 WHERE urls_hash = $1",
-        urls_hash.as_bytes()
-    )
-    .execute(e)
-    .await?;
-    Ok(())
 }
 
 pub async fn upsert_and_check_item_new(
@@ -190,6 +127,43 @@ pub async fn set_feed_group_update_time(e: impl PgExecutor<'_>, urls_hash: Hash)
     .await?;
 
     Ok(())
+}
+
+pub async fn reset_fail_count(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
+    sqlx::query!(
+        "UPDATE failures SET fail_count = 0 WHERE urls_hash = $1",
+        urls_hash.as_bytes()
+    )
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+pub async fn record_failure(e: impl PgExecutor<'_>, urls_hash: Hash, report: Report) -> Result<()> {
+    let ansi_error = format!("{report:?}");
+    let error = ansi_to_html::convert(&ansi_error).unwrap_or_else(|_| clean_text(&ansi_error));
+    sqlx::query!(
+        r#"
+        INSERT INTO failures (urls_hash, fail_count, error)
+        VALUES ($1, 1, $2)
+        ON CONFLICT (urls_hash) DO UPDATE
+            SET fail_count = failures.fail_count + 1, error = $2
+        "#,
+        urls_hash.as_bytes(),
+        error,
+    )
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_failing_feeds(e: impl PgExecutor<'_>) -> Result<Vec<(Hash, String)>> {
+    sqlx::query!("SELECT urls_hash, error FROM failures WHERE fail_count >= 2")
+        .fetch_all(e)
+        .await?
+        .into_iter()
+        .map(|row| Ok((Hash::from_slice(&row.urls_hash)?, row.error)))
+        .collect()
 }
 
 fn saturating_sub_datetime(dt: DateTime<Utc>, delta: TimeDelta) -> DateTime<Utc> {

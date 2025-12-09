@@ -4,8 +4,6 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::config::FeedGroup;
-
 const RETRY_COUNT: u32 = 3;
 
 pub struct Mailer {
@@ -20,25 +18,22 @@ pub struct Mail {
 
 pub async fn send_email_with_backoff(
     sender: &Mailer,
-    feed: &FeedGroup,
+    to: &[Mailbox],
+    cc: &[Mailbox],
+    bcc: &[Mailbox],
     mails: Vec<Mail>,
 ) -> Result<()> {
-    if feed.settings.to.is_empty() && feed.settings.cc.is_empty() && feed.settings.bcc.is_empty() {
-        log::warn!("No recipients specified for feed group {:?}", feed.urls);
-        return Ok(());
-    }
-
     let mut message = Message::builder().from(sender.from.clone());
 
-    for addr in feed.settings.to.iter() {
+    for addr in to.iter() {
         message = message.to(addr.clone());
     }
 
-    for addr in feed.settings.cc.iter() {
+    for addr in cc.iter() {
         message = message.cc(addr.clone());
     }
 
-    for addr in feed.settings.bcc.iter() {
+    for addr in bcc.iter() {
         message = message.bcc(addr.clone());
     }
 
