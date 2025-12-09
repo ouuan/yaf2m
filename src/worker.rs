@@ -99,11 +99,11 @@ impl Worker {
             log::trace!("Fetched feed from {url}: {:?}", feed.borrow_feed());
             all_feeds.push(feed);
         }
+        all_feeds.reverse();
 
         let mut new_items = Vec::new();
 
-        // reverse back
-        for item in all_feeds.iter().rev().flat_map(|feed| feed.borrow_items()) {
+        for item in all_feeds.iter().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
                 log::trace!(
                     "Item filtered out:\n{}",
