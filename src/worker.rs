@@ -5,6 +5,7 @@ use crate::feed::fetch_feed;
 use crate::render::{Renderer, TemplateName};
 use color_eyre::Result;
 use color_eyre::eyre::WrapErr;
+use minijinja::render;
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;

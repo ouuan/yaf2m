@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO feed_items (urls_hash, update_hash, last_seen)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (urls_hash, update_hash) DO UPDATE\n            SET last_seen = EXCLUDED.last_seen\n        RETURNING (xmax = 0) as \"new!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "new!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "aeb0a430416dd8bcbb3e7c55385a0aa595bdc717b59f851a7baf7b09a7f0c496"
+}

@@ -25,10 +25,9 @@ pub async fn init_db(pool: &PgPool) -> Result<()> {
         CREATE TABLE IF NOT EXISTS feed_items (
             id BIGSERIAL PRIMARY KEY,
             urls_hash BYTEA NOT NULL REFERENCES feed_groups(urls_hash) ON DELETE CASCADE,
-            guid TEXT NOT NULL,
             update_hash BYTEA NOT NULL,
             last_seen TIMESTAMPTZ NOT NULL,
-            UNIQUE(urls_hash, guid, update_hash)
+            UNIQUE(urls_hash, update_hash)
         )
         "#,
     )
@@ -116,20 +115,18 @@ pub async fn reset_feed_group_fail_count(e: impl PgExecutor<'_>, urls_hash: Hash
 pub async fn upsert_and_check_item_new(
     e: impl PgExecutor<'_>,
     urls_hash: Hash,
-    guid: &str,
     update_hash: Hash,
 ) -> Result<bool> {
     let now = Utc::now();
     let new = sqlx::query_scalar!(
         r#"
-        INSERT INTO feed_items (urls_hash, guid, update_hash, last_seen)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (urls_hash, guid, update_hash) DO UPDATE
+        INSERT INTO feed_items (urls_hash, update_hash, last_seen)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (urls_hash, update_hash) DO UPDATE
             SET last_seen = EXCLUDED.last_seen
         RETURNING (xmax = 0) as "new!"
         "#,
         urls_hash.as_bytes(),
-        guid,
         update_hash.as_bytes(),
         now,
     )
