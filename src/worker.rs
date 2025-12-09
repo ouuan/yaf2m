@@ -49,7 +49,7 @@ impl Worker {
                 let worker = Arc::clone(&this);
                 set.spawn(async move {
                     if let Err(e) = worker.process_feed(&feed).await {
-                        log::error!("Error processing feed: {e:?}");
+                        log::error!("Error processing feed group: {e:?}");
                         if let Err(e) =
                             db::increment_feed_group_fail_count(&worker.pool, feed.urls_hash).await
                         {
@@ -72,6 +72,8 @@ impl Worker {
     }
 
     async fn process_feed(&self, feed_group: &FeedGroup) -> Result<()> {
+        log::debug!("Feed group {:?} started", feed_group.urls);
+
         let mut tx = self.pool.begin().await?;
 
         let fail_count = db::get_feed_group_fail_count(&mut *tx, feed_group.urls_hash).await?;
@@ -79,6 +81,7 @@ impl Worker {
         let status = db::try_check_feed_group(&mut *tx, fail_count, feed_group).await?;
 
         if status == "wait" {
+            log::debug!("Feed group {:?} waiting", feed_group.urls);
             return Ok(());
         }
 
@@ -92,6 +95,7 @@ impl Worker {
             let feed = fetch_feed(url, &feed_group.settings)
                 .await
                 .wrap_err_with(|| format!("failed to fetch feed from {url}"))?;
+            log::trace!("Fetched feed from {url}: {:?}", feed.borrow_feed());
             all_feeds.push(feed);
         }
 
@@ -100,6 +104,7 @@ impl Worker {
         // reverse back
         for item in all_feeds.iter().rev().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
+                log::trace!("Item filtered out: {:?}", item.item);
                 continue;
             }
 
@@ -112,6 +117,13 @@ impl Worker {
                 update_hash,
             )
             .await?;
+
+            log::trace!(
+                "Item {:?} with hash {} is new: {}",
+                item.item,
+                update_hash,
+                new
+            );
 
             if new {
                 new_items.push(item);
