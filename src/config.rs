@@ -26,8 +26,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MAILS_PER_CHECK: usize = 5;
 const DEFAULT_SANITIZE: bool = true;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Config {
+    pub global_settings: Settings,
     pub feeds: Vec<FeedGroup>,
 }
 
@@ -39,12 +40,12 @@ pub async fn load_config(path: &Path) -> Result<Config> {
     let config: ConfigFile = toml::from_str(&raw)
         .wrap_err_with(|| format!("Failed to parse config file at {}", path.display()))?;
 
-    let global = config.settings.with_default();
+    let global_settings = config.settings.with_default();
 
     let feeds = config
         .feeds
         .into_iter()
-        .map(|fc| fc.resolve(&global))
+        .map(|fc| fc.resolve(&global_settings))
         .collect::<Vec<_>>();
 
     let mut url_hash_set = HashSet::new();
@@ -58,7 +59,10 @@ pub async fn load_config(path: &Path) -> Result<Config> {
         }
     }
 
-    Ok(Config { feeds })
+    Ok(Config {
+        global_settings,
+        feeds,
+    })
 }
 
 #[derive(Debug)]

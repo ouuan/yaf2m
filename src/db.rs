@@ -13,6 +13,7 @@ pub async fn init_db(pool: &PgPool) -> Result<()> {
             urls_hash BYTEA PRIMARY KEY,
             last_check TIMESTAMPTZ NOT NULL,
             last_update TIMESTAMPTZ,
+            last_seen TIMESTAMPTZ NOT NULL,
             fail_count INT NOT NULL DEFAULT 0
         )
         "#,
@@ -36,6 +37,30 @@ pub async fn init_db(pool: &PgPool) -> Result<()> {
 
     tx.commit().await?;
 
+    Ok(())
+}
+
+pub async fn delete_old_groups(e: impl PgExecutor<'_>, keep_old: TimeDelta) -> Result<()> {
+    let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
+    let result = sqlx::query!("DELETE FROM feed_groups WHERE last_seen < $1", cutoff)
+        .execute(e)
+        .await?;
+    log::debug!(
+        "Deleted {} feed groups older than {}",
+        result.rows_affected(),
+        cutoff,
+    );
+    Ok(())
+}
+
+pub async fn touch_feed_group_last_seen(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
+    sqlx::query!(
+        "UPDATE feed_groups SET last_seen = $1 WHERE urls_hash = $2",
+        Utc::now(),
+        urls_hash.as_bytes()
+    )
+    .execute(e)
+    .await?;
     Ok(())
 }
 
@@ -64,8 +89,8 @@ pub async fn try_check_feed_group(
     let status = sqlx::query_scalar!(
         r#"
         WITH upsert AS (
-            INSERT INTO feed_groups (urls_hash, last_check)
-            VALUES ($1, $2)
+            INSERT INTO feed_groups (urls_hash, last_check, last_seen)
+            VALUES ($1, $2, $2)
             ON CONFLICT (urls_hash)
             DO UPDATE SET last_check = $2
                 WHERE feed_groups.last_check < $3
@@ -117,7 +142,6 @@ pub async fn upsert_and_check_item_new(
     urls_hash: Hash,
     update_hash: Hash,
 ) -> Result<bool> {
-    let now = Utc::now();
     let new = sqlx::query_scalar!(
         r#"
         INSERT INTO feed_items (urls_hash, update_hash, last_seen)
@@ -128,7 +152,7 @@ pub async fn upsert_and_check_item_new(
         "#,
         urls_hash.as_bytes(),
         update_hash.as_bytes(),
-        now,
+        Utc::now(),
     )
     .fetch_one(e)
     .await?;
@@ -157,10 +181,9 @@ pub async fn delete_old_items(
 }
 
 pub async fn set_feed_group_update_time(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
-    let now = Utc::now();
     sqlx::query!(
         "UPDATE feed_groups SET last_update = $1 WHERE urls_hash = $2",
-        now,
+        Utc::now(),
         urls_hash.as_bytes()
     )
     .execute(e)

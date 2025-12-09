@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE feed_groups SET last_seen = $1 WHERE urls_hash = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7e6ca34d8c2bf8b123ffb062b2603c665bfef9830aba84c7d7226573954d66e0"
+}

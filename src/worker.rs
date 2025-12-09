@@ -3,6 +3,7 @@ use crate::db;
 use crate::email::{Mail, Mailer, send_email_with_backoff};
 use crate::feed::fetch_feed;
 use crate::render::{Renderer, TemplateName};
+use chrono::TimeDelta;
 use color_eyre::Result;
 use color_eyre::eyre::WrapErr;
 use minijinja::render;
@@ -30,6 +31,7 @@ impl Worker {
     pub async fn run(self) -> Result<()> {
         let this = Arc::new(self);
         let mut feeds = Vec::new();
+        let mut keep_old = TimeDelta::default();
         let mut last_modified = SystemTime::UNIX_EPOCH;
 
         loop {
@@ -41,6 +43,7 @@ impl Worker {
                 let config = load_config(&this.config_path).await?;
                 log::info!("Config file update reloaded");
                 feeds = config.feeds.into_iter().map(Arc::new).collect();
+                keep_old = config.global_settings.keep_old;
                 last_modified = modified;
             }
 
@@ -66,6 +69,13 @@ impl Worker {
                 }
             }
 
+            db::delete_old_groups(&this.pool, keep_old)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Failed to delete old feed groups: {e:?}");
+                })
+                .ok();
+
             log::debug!("Worker cycle completed, sleeping for 1 minute");
 
             tokio::time::sleep(Duration::from_mins(1)).await;
@@ -74,6 +84,8 @@ impl Worker {
 
     async fn process_feed(&self, feed_group: &FeedGroup) -> Result<()> {
         log::debug!("Feed group {:?} started", feed_group.urls);
+
+        db::touch_feed_group_last_seen(&self.pool, feed_group.urls_hash).await?;
 
         let mut tx = self.pool.begin().await?;
 
