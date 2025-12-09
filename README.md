@@ -2,6 +2,16 @@
 
 Send email alerts or digests when your RSS/Atom feeds update.
 
+## Features
+
+- **Feed Grouping & Deduplication**: Combine multiple feed URLs into a single group. Items from all feeds in a group are deduplicated and processed together.
+- **Digest or Individual Emails**: Choose between sending a single digest email for multiple updates or separate emails for each new item. Automatic digesting if too many updates.
+- **Flexible Per-Feed Settings**: Settings (recipients, templates, update keys, etc.) can be set globally or overridden for each feed group.
+- **Custom Update Keys**: Detect updates using traditional GUIDs or any custom content via MiniJinja expressions, allowing notification on any change you care about.
+- **Customizable Email Templates**: Use MiniJinja templates for email subject and body.
+- **Advanced Filtering**: Filter feed items using logical combinations (`and`, `or`, `not`), regular expressions, or MiniJinja expressions for fine-grained control.
+- **HTML Sanitization**: Sanitize feed HTML content for safer emails.
+
 ## Quick Start
 
 -   Write a config file with your feeds.
