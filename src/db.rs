@@ -129,9 +129,9 @@ pub async fn set_feed_group_update_time(e: impl PgExecutor<'_>, urls_hash: Hash)
     Ok(())
 }
 
-pub async fn reset_fail_count(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
+pub async fn clear_failure(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
     sqlx::query!(
-        "UPDATE failures SET fail_count = 0 WHERE urls_hash = $1",
+        "DELETE FROM failures WHERE urls_hash = $1",
         urls_hash.as_bytes()
     )
     .execute(e)

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE failures SET fail_count = 0 WHERE urls_hash = $1",
+  "query": "DELETE FROM failures WHERE urls_hash = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -10,5 +10,5 @@
     },
     "nullable": []
   },
-  "hash": "55059523e45ab8c7de3d7ea79fd036855cb2a9f6473d4c48a4b1fcddf75b9cad"
+  "hash": "ea7a7bbd94320aa57a8db771e43a0c1b469de11c75b8e905c679b2753a6eb839"
 }

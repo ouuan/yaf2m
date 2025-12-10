@@ -223,7 +223,7 @@ impl Worker {
             db::set_feed_group_update_time(&mut *tx, feed_group.urls_hash).await?;
         }
 
-        db::reset_fail_count(&mut *tx, feed_group.urls_hash).await?;
+        db::clear_failure(&mut *tx, feed_group.urls_hash).await?;
 
         db::delete_old_items(&mut *tx, feed_group.urls_hash, feed_group.settings.keep_old).await?;
 
