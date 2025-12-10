@@ -38,6 +38,7 @@ impl Worker {
         let this = Arc::new(self);
         let mut feeds = Vec::new();
         let mut feed_map = HashMap::new();
+        let mut feed_hashes = Vec::new();
         let mut keep_old = TimeDelta::default();
         let mut last_modified = SystemTime::UNIX_EPOCH;
         let mut failure_tracker = FailureTracker::new();
@@ -52,6 +53,10 @@ impl Worker {
                 log::info!("Config file update reloaded");
                 feeds = config.feeds.into_iter().map(Arc::new).collect();
                 feed_map = feeds.iter().map(|feed| (feed.urls_hash, feed)).collect();
+                feed_hashes = feeds
+                    .iter()
+                    .map(|feed| feed.urls_hash.as_bytes().to_vec())
+                    .collect();
                 keep_old = config.global_settings.keep_old;
                 failure_tracker.set_report_to(config.error_report_to);
                 last_modified = modified;
@@ -115,7 +120,7 @@ impl Worker {
                 Err(e) => log::error!("Failed to get failing feeds: {e:?}"),
             }
 
-            db::delete_old_groups(&this.pool, keep_old)
+            db::delete_old_groups(&this.pool, keep_old, &feed_hashes)
                 .await
                 .inspect_err(|e| {
                     log::error!("Failed to delete old feed groups: {e:?}");

@@ -15,11 +15,19 @@ pub async fn init_db(pool: &PgPool) -> Result<()> {
         .wrap_err("Failed to run database migrations")
 }
 
-pub async fn delete_old_groups(e: impl PgExecutor<'_>, keep_old: TimeDelta) -> Result<()> {
+pub async fn delete_old_groups(
+    e: impl PgExecutor<'_>,
+    keep_old: TimeDelta,
+    groups_in_config: &[Vec<u8>],
+) -> Result<()> {
     let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
-    let result = sqlx::query!("DELETE FROM feed_groups WHERE last_seen < $1", cutoff)
-        .execute(e)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM feed_groups WHERE last_seen < $1 AND NOT (urls_hash = ANY($2))",
+        cutoff,
+        groups_in_config,
+    )
+    .execute(e)
+    .await?;
     log::debug!(
         "Deleted {} feed groups older than {}",
         result.rows_affected(),

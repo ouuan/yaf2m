@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM feed_groups WHERE last_seen < $1 AND NOT (urls_hash = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e51faf084cbaaa40ac6213264532de47c968f7ab53cda1edbe724ffd906570d"
+}
