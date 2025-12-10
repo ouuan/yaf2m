@@ -99,7 +99,7 @@ title-regex = '^Announcing'
 [[feeds.filter.or]]
 and = [
     { not.body-regex = 'foo' },
-    { jinja-expr = 'item.author.name is matches("John")' },
+    { jinja-expr = 'item.author.name is match("John")' },
 ]
 ```
 
@@ -119,7 +119,10 @@ and = [
     -   Context for digest: `{ feeds => [Feed], items => [{ feed => Feed, item => Entry }] }`, where `feeds` are all feeds in the group (no matter updated or not), and `items` are updated items.
     -   Custom args: `template-args`.
     -   Can include each other, e.g. `{% include "item-body.html" %}`, `{% include "digest-subject.txt" %}`.
-    -   More features: [`filters`](https://docs.rs/minijinja/latest/minijinja/filters/index.html), [`tests`](https://docs.rs/minijinja/latest/minijinja/tests/index.html), [`minijinja-contrib`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/), and a custom test `matches(regex)`.
+    -   More features:
+        -   builtin [`filters`](https://docs.rs/minijinja/latest/minijinja/filters/index.html) and [`tests`](https://docs.rs/minijinja/latest/minijinja/tests/index.html)
+        -   [`minijinja-contrib`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/) [`filters`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/filters/index.html) and [`globals`](https://docs.rs/minijinja-contrib/latest/minijinja_contrib/globals/index.html)
+        -   Regular expressions: `str is match(regex)`, `str | capture(regex[, group])`, `str | regex_replace(regex, replacement)`.
 -   `template-args`: Custom args that are passed to the MiniJinja templates. Template args set on each feed are merged with the global setting. Args used by the default templates:   
     -   `tz`: timezone
     -   `group_title`: used by the default `digest-subject` template to display the title for the entire feed group (useful when there are multiple URLs in a feed group)

@@ -51,10 +51,10 @@ impl<'a> Renderer<'a> {
 
         add_to_environment(&mut env);
 
-        fn regex_matches(value: &str, pattern: &str) -> bool {
-            Regex::new(pattern).is_ok_and(|re| re.is_match(value))
-        }
-        env.add_test("matches", regex_matches);
+        env.add_test("match", regex_is_match);
+        env.add_test("matches", regex_is_match);
+        env.add_filter("capture", regex_capture);
+        env.add_filter("regex_replace", regex_replace);
 
         env.add_global(
             "template_args",
@@ -125,6 +125,35 @@ impl<'a> Renderer<'a> {
             .as_ref()
             .map_or(Ok(true), |f| f.evaluate(ctx))
     }
+}
+
+fn minijinja_regex(pattern: &str) -> Result<Regex, minijinja::Error> {
+    Regex::new(pattern).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            "invalid regular expression",
+        )
+        .with_source(e)
+    })
+}
+
+fn regex_is_match(value: &str, pattern: &str) -> Result<bool, minijinja::Error> {
+    minijinja_regex(pattern).map(|re| re.is_match(value))
+}
+
+fn regex_capture(value: &str, pattern: &str, i: Option<usize>) -> Result<Value, minijinja::Error> {
+    minijinja_regex(pattern).map(|re| {
+        re.captures(value)
+            .and_then(|caps| {
+                let index = i.unwrap_or(0);
+                caps.get(index).map(|m| m.as_str())
+            })
+            .into()
+    })
+}
+
+fn regex_replace(value: &str, pattern: &str, replacement: &str) -> Result<Value, minijinja::Error> {
+    minijinja_regex(pattern).map(|re| re.replace_all(value, replacement).into())
 }
 
 struct Templates {
@@ -575,6 +604,172 @@ mod tests {
         let hash2 = renderer.update_hash(&ctx)?;
         assert_eq!(hash1, hash2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn regex_capture_extracts_groups() -> Result<()> {
+        let template =
+            TemplateSource::Inline("Captured: {{ item.id | capture('item-(\\\\d+)') }}".into());
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-123", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Captured: item-123");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_capture_with_group_index() -> Result<()> {
+        let template =
+            TemplateSource::Inline("Number: {{ item.id | capture('item-(\\\\d+)', 1) }}".into());
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-456", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Number: 456");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_capture_returns_none_when_no_match() -> Result<()> {
+        let template = TemplateSource::Inline("Result: {{ item.id | capture('notfound') }}".into());
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-789", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Result: none");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_replace_substitutes_matches() -> Result<()> {
+        let template = TemplateSource::Inline(
+            "Replaced: {{ item.id | regex_replace('item-', 'item_') }}".into(),
+        );
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-999", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Replaced: item_999");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_replace_with_capture_groups() -> Result<()> {
+        let template = TemplateSource::Inline(
+            "Swapped: {{ item.id | regex_replace('(\\\\w+)-(\\\\d+)', '$2-$1') }}".into(),
+        );
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-555", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Swapped: 555-item");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_replace_replaces_all_occurrences() -> Result<()> {
+        let template =
+            TemplateSource::Inline("Result: {{ item.id | regex_replace('a', 'A') }}".into());
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("banana", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "Result: bAnAnA");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_is_match_test() -> Result<()> {
+        let template = TemplateSource::Inline(
+            "{% if item.id is match('item-\\\\d+') %}matches{% else %}no match{% endif %}".into(),
+        );
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-123", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "matches");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_is_match_test_no_match() -> Result<()> {
+        let template = TemplateSource::Inline(
+            "{% if item.id is match('\\\\d+') %}matches{% else %}no match{% endif %}".into(),
+        );
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("notanumber", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
+        assert_eq!(rendered, "no match");
+        Ok(())
+    }
+
+    #[test]
+    fn regex_returns_error_on_invalid_pattern() -> Result<()> {
+        let template = TemplateSource::Inline(
+            "{% if item.id is match('[') %}matches{% else %}no match{% endif %}".into(),
+        );
+        let feed_group = build_feed_group(template, vec!["item.id".into()], None);
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-1", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let result = renderer.render(TemplateName::ItemSubject, ctx);
+        assert!(result.is_err());
         Ok(())
     }
 }
