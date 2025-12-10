@@ -101,7 +101,15 @@ impl Worker {
                                 .map(|feed| (Arc::clone(feed), error))
                         })
                         .collect::<Vec<_>>();
-                    log::warn!("{} feeds are failing", failures.len());
+                    log::log!(
+                        if failures.is_empty() {
+                            log::Level::Debug
+                        } else {
+                            log::Level::Warn
+                        },
+                        "{} feeds are failing",
+                        failures.len()
+                    );
                     failure_tracker.record(failures, &this.mailer).await;
                 }
                 Err(e) => log::error!("Failed to get failing feeds: {e:?}"),
