@@ -5,15 +5,15 @@ mod feed;
 mod render;
 mod worker;
 
+use crate::email::Mailer;
 use color_eyre::Result;
 use color_eyre::eyre::WrapErr;
 use db::init_db;
 use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, Tokio1Executor};
 use sqlx::postgres::PgPoolOptions;
+use std::time::Duration;
 use worker::Worker;
-
-use crate::email::Mailer;
 
 pub async fn run() -> Result<()> {
     let config_path =
@@ -22,7 +22,12 @@ pub async fn run() -> Result<()> {
     let database_url =
         std::env::var("POSTGRES_URL").wrap_err("POSTGRES_URL environment variable not set")?;
 
-    let pool = PgPoolOptions::new().connect(&database_url).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_slow_threshold(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_mins(2))
+        .connect(&database_url)
+        .await?;
 
     init_db(&pool).await?;
 
