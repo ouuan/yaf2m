@@ -159,20 +159,35 @@ pub async fn clear_failure(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()
 }
 
 pub async fn record_failure(e: impl PgExecutor<'_>, urls_hash: Hash, report: Report) -> Result<()> {
-    let ansi_error = format!("{report} ({})\n{report:?}", Utc::now());
+    let now = Utc::now();
+    let ansi_error = format!("{report} ({now})\n{report:?}");
     let error = ansi_to_html::convert(&ansi_error).unwrap_or_else(|_| clean_text(&ansi_error));
     sqlx::query!(
         r#"
-        INSERT INTO failures (urls_hash, fail_count, error)
-        VALUES ($1, 1, $2)
+        INSERT INTO failures (urls_hash, fail_count, error, fail_time)
+        VALUES ($1, 1, $2, $3)
         ON CONFLICT (urls_hash) DO UPDATE
-            SET fail_count = failures.fail_count + 1, error = $2
+            SET fail_count = failures.fail_count + 1, error = $2, fail_time = $3
         "#,
         urls_hash.as_bytes(),
         error,
+        now,
     )
     .execute(e)
     .await?;
+    Ok(())
+}
+
+pub async fn delete_old_failures(e: impl PgExecutor<'_>, keep_old: TimeDelta) -> Result<()> {
+    let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
+    let result = sqlx::query!("DELETE FROM failures WHERE fail_time < $1", cutoff)
+        .execute(e)
+        .await?;
+    log::debug!(
+        "Deleted {} failures older than {}",
+        result.rows_affected(),
+        cutoff,
+    );
     Ok(())
 }
 

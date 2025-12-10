@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO failures (urls_hash, fail_count, error, fail_time)\n        VALUES ($1, 1, $2, $3)\n        ON CONFLICT (urls_hash) DO UPDATE\n            SET fail_count = failures.fail_count + 1, error = $2, fail_time = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d14fd3f39d7b30b56981942ec4173174b54cb41a6c9b02b722579829987ddb60"
+}

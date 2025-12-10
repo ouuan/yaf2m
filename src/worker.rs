@@ -122,6 +122,13 @@ impl Worker {
                 })
                 .ok();
 
+            db::delete_old_failures(&this.pool, keep_old)
+                .await
+                .inspect_err(|e| {
+                    log::error!("Failed to delete old failures: {e:?}");
+                })
+                .ok();
+
             log::debug!("Worker cycle completed, sleeping for 1 minute");
 
             tokio::time::sleep(Duration::from_mins(1)).await;
