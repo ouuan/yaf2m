@@ -127,6 +127,7 @@ pub enum Filter {
     Not(Box<Self>),
     TitleRegex(String),
     BodyRegex(String),
+    Regex(String),
     JinjaExpr(String),
 }
 

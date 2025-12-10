@@ -139,7 +139,7 @@ and = [
 
 -   `url`/`urls`: Feed URLs in the group.
 -   `filter`: Filter feed items. Can be one of:
-    -   `title-regex` / `body-regex`: Regular expression match.
+    -   `title-regex` / `body-regex` / `regex`: Regular expression match for title / body / both.
     -   `jinja-expr`: Evaluated as MiniJinja expression to see if it's true.
     -   `and: [..]` / `or: [..]` / `not: {..}`: Logic combination.
 

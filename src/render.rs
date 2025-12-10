@@ -169,6 +169,7 @@ enum CompiledFilter<'a> {
     Not(Box<Self>),
     TitleRegex(Regex),
     BodyRegex(Regex),
+    Regex(Regex),
     JinjaExpr(Expression<'a, 'a>),
 }
 
@@ -195,6 +196,10 @@ impl<'a> CompiledFilter<'a> {
             Filter::BodyRegex(pattern) => {
                 let re = Regex::new(pattern).wrap_err("Failed to complile filter body regex")?;
                 Ok(Self::BodyRegex(re))
+            }
+            Filter::Regex(pattern) => {
+                let re = Regex::new(pattern).wrap_err("Failed to complile filter regex")?;
+                Ok(Self::Regex(re))
             }
             Filter::JinjaExpr(expr_str) => {
                 let expr = env
@@ -225,18 +230,15 @@ impl<'a> CompiledFilter<'a> {
             }
             Self::Not(clause) => Ok(!clause.evaluate(ctx)?),
             Self::TitleRegex(re) => {
-                Ok(re.is_match(ctx.item.title.as_ref().map_or("", |t| &t.content)))
+                Ok((ctx.item.title.as_ref()).is_some_and(|t| re.is_match(&t.content)))
             }
-            Self::BodyRegex(re) => Ok(ctx
-                .item
-                .summary
-                .as_ref()
-                .is_some_and(|t| re.is_match(&t.content))
-                || ctx
-                    .item
-                    .content
-                    .as_ref()
-                    .is_some_and(|c| c.body.as_ref().is_some_and(|b| re.is_match(b)))),
+            Self::BodyRegex(re) => Ok((ctx.item.summary.as_ref().map(|t| &t.content).into_iter())
+                .chain(ctx.item.content.as_ref().and_then(|c| c.body.as_ref()))
+                .any(|text| re.is_match(text))),
+            Self::Regex(re) => Ok((ctx.item.title.as_ref().map(|t| &t.content).into_iter())
+                .chain(ctx.item.summary.as_ref().map(|t| &t.content))
+                .chain(ctx.item.content.as_ref().and_then(|c| c.body.as_ref()))
+                .any(|text| re.is_match(text))),
             Self::JinjaExpr(expr) => expr
                 .eval(ctx)
                 .map(|v| v.is_true())
@@ -770,6 +772,113 @@ mod tests {
 
         let result = renderer.render(TemplateName::ItemSubject, ctx);
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn filter_title_regex_matches_title() -> Result<()> {
+        let filter = Filter::TitleRegex("Rust".into());
+
+        let feed_group = build_feed_group(
+            TemplateSource::Inline("unused".into()),
+            vec!["item.id".into()],
+            Some(filter),
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, matching_item) =
+            sample_feed_and_item("id", "Rust Programming", Some("Rust in summary"));
+        let matching_ctx = FeedItemContext {
+            feed: &feed,
+            item: &matching_item,
+        };
+
+        let (_, non_matching_item) =
+            sample_feed_and_item("id2", "Python Guide", Some("Rust in summary"));
+        let non_matching_ctx = FeedItemContext {
+            feed: &feed,
+            item: &non_matching_item,
+        };
+
+        assert!(renderer.filter(&matching_ctx)?);
+        assert!(!renderer.filter(&non_matching_ctx)?);
+        Ok(())
+    }
+
+    #[test]
+    fn filter_body_regex_matches_summary_and_content() -> Result<()> {
+        let filter = Filter::BodyRegex("important".into());
+
+        let feed_group = build_feed_group(
+            TemplateSource::Inline("unused".into()),
+            vec!["item.id".into()],
+            Some(filter),
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        // Test matching summary
+        let (feed, summary_item) = sample_feed_and_item("id1", "Title", Some("important info"));
+        let summary_ctx = FeedItemContext {
+            feed: &feed,
+            item: &summary_item,
+        };
+
+        // Test non-matching title (should not match)
+        let (_, title_item) =
+            sample_feed_and_item("id2", "important Title", Some("irrelevant summary"));
+        let title_ctx = FeedItemContext {
+            feed: &feed,
+            item: &title_item,
+        };
+
+        // Test non-matching item
+        let (_, non_matching_item) = sample_feed_and_item("id3", "Title", Some("irrelevant"));
+        let non_matching_ctx = FeedItemContext {
+            feed: &feed,
+            item: &non_matching_item,
+        };
+
+        assert!(renderer.filter(&summary_ctx)?);
+        assert!(!renderer.filter(&title_ctx)?);
+        assert!(!renderer.filter(&non_matching_ctx)?);
+        Ok(())
+    }
+
+    #[test]
+    fn filter_regex_matches_title_summary_and_content() -> Result<()> {
+        let filter = Filter::Regex("search".into());
+
+        let feed_group = build_feed_group(
+            TemplateSource::Inline("unused".into()),
+            vec!["item.id".into()],
+            Some(filter),
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        // Test matching title
+        let (feed, title_item) = sample_feed_and_item("id1", "search term", Some("summary"));
+        let title_ctx = FeedItemContext {
+            feed: &feed,
+            item: &title_item,
+        };
+
+        // Test matching summary
+        let (_, summary_item) = sample_feed_and_item("id2", "Title", Some("search in summary"));
+        let summary_ctx = FeedItemContext {
+            feed: &feed,
+            item: &summary_item,
+        };
+
+        // Test non-matching item
+        let (_, non_matching_item) = sample_feed_and_item("id3", "No match", Some("irrelevant"));
+        let non_matching_ctx = FeedItemContext {
+            feed: &feed,
+            item: &non_matching_item,
+        };
+
+        assert!(renderer.filter(&title_ctx)?);
+        assert!(renderer.filter(&summary_ctx)?);
+        assert!(!renderer.filter(&non_matching_ctx)?);
         Ok(())
     }
 }
