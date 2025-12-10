@@ -39,6 +39,25 @@ pub async fn touch_feed_group_last_seen(e: impl PgExecutor<'_>, urls_hash: Hash)
     Ok(())
 }
 
+pub async fn is_feed_group_waiting(
+    e: impl PgExecutor<'_>,
+    feed_config: &FeedGroup,
+) -> Result<bool> {
+    let now = Utc::now();
+    let update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
+
+    let waiting = sqlx::query_scalar!(
+        "SELECT 1 AS \"waiting!\" FROM feed_groups WHERE urls_hash = $1 AND last_check > $2",
+        feed_config.urls_hash.as_bytes(),
+        update_cutoff,
+    )
+    .fetch_optional(e)
+    .await?
+    .is_some();
+
+    Ok(waiting)
+}
+
 pub async fn try_check_feed_group(
     e: impl PgExecutor<'_>,
     feed_config: &FeedGroup,

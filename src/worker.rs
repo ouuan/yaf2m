@@ -63,9 +63,23 @@ impl Worker {
                 let worker = Arc::clone(&this);
                 set.spawn(async move {
                     if let Err(e) = worker.process_feed(&feed).await {
-                        log::error!("Error processing feed group: {e:?}");
-                        if let Err(e) = db::record_failure(&worker.pool, feed.urls_hash, e).await {
-                            log::error!("Failed to record error: {e:?}");
+                        log::error!("Error processing feed group [{:?}]: {e:?}", feed.urls);
+                        match db::is_feed_group_waiting(&worker.pool, &feed).await {
+                            Err(e) => log::error!(
+                                "Failed to check if feed group [{:?}] is waiting: {e:?}",
+                                feed.urls
+                            ),
+                            Ok(true) => log::info!(
+                                "Error happened while feed group [{:?}] is still waiting: {e:?}",
+                                feed.urls
+                            ),
+                            Ok(false) => {
+                                if let Err(e) =
+                                    db::record_failure(&worker.pool, feed.urls_hash, e).await
+                                {
+                                    log::error!("Failed to record error: {e:?}");
+                                }
+                            }
                         }
                     }
                 });
