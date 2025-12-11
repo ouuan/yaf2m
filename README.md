@@ -59,6 +59,7 @@ to = []
 cc = []
 bcc = []
 digest = false
+max-mails-per-check = 5
 item-subject = <src/templates/item-subject.txt>
 digest-subject = <src/templates/digest-subject.txt>
 item-body = <src/templates/item-body.html>
@@ -68,7 +69,6 @@ update-key = 'item.id'
 interval = '1h'
 keep-old = '1w'
 timeout = '30s'
-max-mails-per-check = 5
 sanitize = true
 sort-by-last-modified = false
 http-headers = {}
@@ -81,6 +81,7 @@ url = "https://blog.rust-lang.org/feed.xml"
 # cc = "john@example.com" is the same as cc = ["john@example.com"]
 # bcc = []
 # digest = true
+# max-mails-per-check = 1
 # item-subject.inline = "{{ item.title.content }}"
 # digest-subject.inline = "My daily feed on {{ now() | dateformat(tz=template_args.tz) }}"
 # item-body.file = "/path/to/item-template.html"
@@ -90,7 +91,6 @@ url = "https://blog.rust-lang.org/feed.xml"
 # interval = '1d'
 # keep-old = '2w'
 # timeout = '1m'
-# max-mails-per-check = 1
 # sanitize = false
 # sort-by-last-modified = true
 # http-headers.user-agent = "xxx"
@@ -111,7 +111,8 @@ and = [
 ### Fields
 
 -   `to`, `cc`, `bcc`: Mail recipients. Each can be a single string or an array of strings.
--   `digest`: Whether to send all updates in a single digest mail or to send one mail per item.
+-   `digest`: Whether to send all updates in a single digest mail or to send one mail per item. Newly added feeds and updates triggered by configuration changes (e.g. `update-keys` or `filter`) are always sent in digests.
+-   `max-mails-per-check`: Send digest if there are too many updates, even if `digest = false`.
 -   `item-subject`, `digest-subject`, `item-body`, `digest-body`: [MiniJinja](https://docs.rs/minijinja) templates for mail contents.
     -   Can be `{ inline = "{{ template }}" }` or `{ file = "/path/to/template" }`.
     -   Default templates: [`src/templates`](./src/templates).
@@ -130,7 +131,6 @@ and = [
 -   `interval`: Check feed update once per interval.
 -   `keep-old`: Prune old data in the database.
 -   `timeout`: Timeout when fetching the feed.
--   `max-mails-per-check`: Send digest if there are too many updates, even if `digest = false`.
 -   `sanitize`: Whether to sanitize HTML in feed contents or keep the HTML as it is.
 -   `sort-by-last-modified`: Whether to sort items in a digest by their last modified time.
 -   `http-headers`: HTTP header map when fetching the feed.
