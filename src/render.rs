@@ -276,6 +276,7 @@ mod tests {
 
         FeedGroup {
             urls_hash: urls_hasher.finalize(),
+            criteria_hash: Hash::from_bytes([0; _]),
             urls,
             filter,
             settings: Settings {

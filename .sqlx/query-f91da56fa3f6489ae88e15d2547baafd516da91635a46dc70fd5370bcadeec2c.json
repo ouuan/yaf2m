@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT 1 AS \"waiting!\" FROM feed_groups WHERE urls_hash = $1 AND last_check > $2",
+  "query": "SELECT 1 AS \"waiting!\" FROM feed_groups WHERE urls_hash = $1 AND last_check > $2 AND criteria_hash = $3",
   "describe": {
     "columns": [
       {
@@ -12,12 +12,13 @@
     "parameters": {
       "Left": [
         "Bytea",
-        "Timestamptz"
+        "Timestamptz",
+        "Bytea"
       ]
     },
     "nullable": [
       null
     ]
   },
-  "hash": "5f05678a033baa9357924ff3ca7fcd7e758cdde26b4ade7eab263bc4bb439f47"
+  "hash": "f91da56fa3f6489ae88e15d2547baafd516da91635a46dc70fd5370bcadeec2c"
 }
