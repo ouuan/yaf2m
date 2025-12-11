@@ -192,7 +192,7 @@ pub async fn clear_failure(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()
 
 pub async fn record_failure(e: impl PgExecutor<'_>, urls_hash: Hash, report: Report) -> Result<()> {
     let now = Utc::now();
-    let ansi_error = format!("{report} ({now})\n{report:?}");
+    let ansi_error = format!("Error at {now}:{report:?}");
     let error = ansi_to_html::convert(&ansi_error).unwrap_or_else(|_| clean_text(&ansi_error));
     sqlx::query!(
         r#"
