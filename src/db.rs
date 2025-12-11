@@ -2,11 +2,10 @@ use crate::config::FeedGroup;
 use ammonia::clean_text;
 use blake3::Hash;
 use chrono::{DateTime, TimeDelta, Utc};
-use color_eyre::{
-    Result,
-    eyre::{Report, WrapErr},
-};
+use color_eyre::Result;
+use color_eyre::eyre::{Report, WrapErr, eyre};
 use sqlx::{PgExecutor, PgPool};
+use std::str::FromStr;
 
 pub async fn init_db(pool: &PgPool) -> Result<()> {
     sqlx::migrate!("./migrations")
@@ -55,9 +54,10 @@ pub async fn is_feed_group_waiting(
     let update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
 
     let waiting = sqlx::query_scalar!(
-        "SELECT 1 AS \"waiting!\" FROM feed_groups WHERE urls_hash = $1 AND last_check > $2",
+        "SELECT 1 AS \"waiting!\" FROM feed_groups WHERE urls_hash = $1 AND last_check > $2 AND criteria_hash = $3",
         feed_config.urls_hash.as_bytes(),
         update_cutoff,
+        feed_config.criteria_hash.as_bytes(),
     )
     .fetch_optional(e)
     .await?
@@ -66,39 +66,63 @@ pub async fn is_feed_group_waiting(
     Ok(waiting)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeedStatus {
+    NewFeed,
+    NewCriteria,
+    Update,
+    Wait,
+}
+
+impl FromStr for FeedStatus {
+    type Err = color_eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "new_feed" => Ok(FeedStatus::NewFeed),
+            "new_criteria" => Ok(FeedStatus::NewCriteria),
+            "update" => Ok(FeedStatus::Update),
+            "wait" => Ok(FeedStatus::Wait),
+            _ => Err(eyre!("Invalid feed status: {s}")),
+        }
+    }
+}
+
 pub async fn try_check_feed_group(
     e: impl PgExecutor<'_>,
     feed_config: &FeedGroup,
-) -> Result<String> {
+) -> Result<FeedStatus> {
     let now = Utc::now();
     let update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
 
-    let status = sqlx::query_scalar!(
+    sqlx::query_scalar!(
         r#"
         WITH upsert AS (
-            INSERT INTO feed_groups (urls_hash, last_check, last_seen)
-            VALUES ($1, $2, $2)
+            INSERT INTO feed_groups (urls_hash, criteria_hash, last_check, last_seen)
+            VALUES ($1, $2, $3, $3)
             ON CONFLICT (urls_hash)
-            DO UPDATE SET last_check = $2
-                WHERE feed_groups.last_check < $3
+            DO UPDATE SET last_check = $3, criteria_hash = $2
+                WHERE feed_groups.last_check < $4 OR feed_groups.criteria_hash IS DISTINCT FROM $2
             RETURNING
-                (xmax = 0) AS new
+                (xmax = 0) AS new_feed,
+                (OLD.criteria_hash IS DISTINCT FROM $2) AS new_criteria
         )
         SELECT
             CASE
-                WHEN EXISTS (SELECT 1 FROM upsert WHERE new) THEN 'new'
+                WHEN EXISTS (SELECT 1 FROM upsert WHERE new_feed) THEN 'new_feed'
+                WHEN EXISTS (SELECT 1 FROM upsert WHERE new_criteria) THEN 'new_criteria'
                 WHEN EXISTS (SELECT 1 FROM upsert) THEN 'update'
                 ELSE 'wait'
             END AS "status!"
         "#,
         feed_config.urls_hash.as_bytes(),
+        feed_config.criteria_hash.as_bytes(),
         now,
         update_cutoff,
     )
     .fetch_one(e)
-    .await?;
-
-    Ok(status)
+    .await?
+    .parse()
 }
 
 pub async fn upsert_and_check_item_new(

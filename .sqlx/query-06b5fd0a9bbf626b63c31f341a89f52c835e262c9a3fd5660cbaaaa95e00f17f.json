@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH upsert AS (\n            INSERT INTO feed_groups (urls_hash, criteria_hash, last_check, last_seen)\n            VALUES ($1, $2, $3, $3)\n            ON CONFLICT (urls_hash)\n            DO UPDATE SET last_check = $3, criteria_hash = $2\n                WHERE feed_groups.last_check < $4 OR feed_groups.criteria_hash IS DISTINCT FROM $2\n            RETURNING\n                (xmax = 0) AS new_feed,\n                (OLD.criteria_hash IS DISTINCT FROM $2) AS new_criteria\n        )\n        SELECT\n            CASE\n                WHEN EXISTS (SELECT 1 FROM upsert WHERE new_feed) THEN 'new_feed'\n                WHEN EXISTS (SELECT 1 FROM upsert WHERE new_criteria) THEN 'new_criteria'\n                WHEN EXISTS (SELECT 1 FROM upsert) THEN 'update'\n                ELSE 'wait'\n            END AS \"status!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "06b5fd0a9bbf626b63c31f341a89f52c835e262c9a3fd5660cbaaaa95e00f17f"
+}

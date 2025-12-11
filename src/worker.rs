@@ -1,5 +1,5 @@
 use crate::config::{FeedGroup, load_config};
-use crate::db;
+use crate::db::{self, FeedStatus};
 use crate::email::{Mail, Mailer, send_email_with_backoff};
 use crate::feed::fetch_feed;
 use crate::render::{Renderer, TemplateName};
@@ -149,7 +149,7 @@ impl Worker {
 
         let status = db::try_check_feed_group(&mut *tx, feed_group).await?;
 
-        if status == "wait" {
+        if status == FeedStatus::Wait {
             log::debug!("Feed group {:?} waiting", feed_group.urls);
             return Ok(());
         }
@@ -209,7 +209,7 @@ impl Worker {
 
         // Send emails
         if !new_items.is_empty() {
-            let mails = if status == "new"
+            let mails = if matches!(status, FeedStatus::NewFeed | FeedStatus::NewCriteria)
                 || feed_group.settings.digest
                 || new_items.len() > feed_group.settings.max_mails_per_check
             {
@@ -218,7 +218,15 @@ impl Worker {
                     .map(|feed| feed.borrow_feed())
                     .collect::<Vec<_>>();
                 let ctx = minijinja::context! { feeds => feeds, items => new_items };
-                let subject = renderer.render(TemplateName::DigestSubject, &ctx)?;
+                let subject_prefix = match status {
+                    FeedStatus::NewFeed => "[New Feed] ",
+                    FeedStatus::NewCriteria => "[New Criteria] ",
+                    _ => "",
+                };
+                let subject = format!(
+                    "{subject_prefix}{}",
+                    renderer.render(TemplateName::DigestSubject, &ctx)?
+                );
                 let body = renderer.render(TemplateName::DigestBody, &ctx)?;
                 vec![Mail { subject, body }]
             } else {

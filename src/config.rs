@@ -92,6 +92,7 @@ pub struct Settings {
 #[derive(Debug)]
 pub struct FeedGroup {
     pub urls_hash: Hash,
+    pub criteria_hash: Hash,
     pub urls: Vec<String>,
     pub filter: Option<Filter>,
     pub settings: Settings,
@@ -129,6 +130,47 @@ pub enum Filter {
     BodyRegex(String),
     Regex(String),
     JinjaExpr(String),
+}
+
+impl Filter {
+    fn hash(&self) -> Hash {
+        let mut hasher = Hasher::new();
+        match self {
+            Filter::And(subfilters) => {
+                hasher.update(b"And");
+                for subfilter in subfilters {
+                    hasher.update(subfilter.hash().as_bytes());
+                }
+            }
+            Filter::Or(subfilters) => {
+                hasher.update(b"Or");
+                for subfilter in subfilters {
+                    hasher.update(subfilter.hash().as_bytes());
+                }
+            }
+            Filter::Not(subfilter) => {
+                hasher.update(b"Not");
+                hasher.update(subfilter.hash().as_bytes());
+            }
+            Filter::TitleRegex(pattern) => {
+                hasher.update(b"TitleRegex");
+                hasher.update(hash(pattern.as_bytes()).as_bytes());
+            }
+            Filter::BodyRegex(pattern) => {
+                hasher.update(b"BodyRegex");
+                hasher.update(hash(pattern.as_bytes()).as_bytes());
+            }
+            Filter::Regex(pattern) => {
+                hasher.update(b"Regex");
+                hasher.update(hash(pattern.as_bytes()).as_bytes());
+            }
+            Filter::JinjaExpr(expr) => {
+                hasher.update(b"JinjaExpr");
+                hasher.update(hash(expr.as_bytes()).as_bytes());
+            }
+        }
+        hasher.finalize()
+    }
 }
 
 #[serde_as]
@@ -235,12 +277,6 @@ struct FeedConfig {
 
 impl FeedConfig {
     fn resolve(self, global: &Settings) -> FeedGroup {
-        let urls = self.urls;
-        let mut hasher = Hasher::new();
-        for url in &urls {
-            hasher.update(hash(url.as_bytes()).as_bytes());
-        }
-        let urls_hash = hasher.finalize();
         let to = pick(self.settings.to, &global.to);
         let cc = pick(self.settings.cc, &global.cc);
         let bcc = pick(self.settings.bcc, &global.bcc);
@@ -267,9 +303,38 @@ impl FeedConfig {
             .sort_by_last_modified
             .unwrap_or(global.sort_by_last_modified);
         let http_headers = pick(self.settings.http_headers, &global.http_headers);
+
+        let urls_hash = {
+            let mut hasher = Hasher::new();
+            for url in &self.urls {
+                hasher.update(hash(url.as_bytes()).as_bytes());
+            }
+            hasher.finalize()
+        };
+
+        let criteria_hash = {
+            let mut hasher = Hasher::new();
+            hasher.update(urls_hash.as_bytes());
+            let update_key_hash = {
+                let mut hasher = Hasher::new();
+                for key in update_keys.iter() {
+                    hasher.update(hash(key.as_bytes()).as_bytes());
+                }
+                hasher.finalize()
+            };
+            hasher.update(update_key_hash.as_bytes());
+            let filter_hash = self
+                .filter
+                .as_ref()
+                .map_or_else(|| Hash::from_bytes(Default::default()), |f| f.hash());
+            hasher.update(filter_hash.as_bytes());
+            hasher.finalize()
+        };
+
         FeedGroup {
             urls_hash,
-            urls,
+            criteria_hash,
+            urls: self.urls,
             filter: self.filter,
             settings: Settings {
                 to,
