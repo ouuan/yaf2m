@@ -4,6 +4,7 @@ use blake3::Hash;
 use chrono::{DateTime, TimeDelta, Utc};
 use color_eyre::Result;
 use color_eyre::eyre::{Report, WrapErr, eyre};
+use sqlx::postgres::PgQueryResult;
 use sqlx::{PgExecutor, PgPool};
 use std::str::FromStr;
 
@@ -27,11 +28,7 @@ pub async fn delete_old_groups(
     )
     .execute(e)
     .await?;
-    log::debug!(
-        "Deleted {} feed groups older than {}",
-        result.rows_affected(),
-        cutoff,
-    );
+    log_deletion("feed groups", result, cutoff);
     Ok(())
 }
 
@@ -160,11 +157,7 @@ pub async fn delete_old_items(
     )
     .execute(e)
     .await?;
-    log::debug!(
-        "Deleted {} items older than {}",
-        result.rows_affected(),
-        cutoff,
-    );
+    log_deletion("feed items", result, cutoff);
     Ok(())
 }
 
@@ -215,11 +208,7 @@ pub async fn delete_old_failures(e: impl PgExecutor<'_>, keep_old: TimeDelta) ->
     let result = sqlx::query!("DELETE FROM failures WHERE fail_time < $1", cutoff)
         .execute(e)
         .await?;
-    log::debug!(
-        "Deleted {} failures older than {}",
-        result.rows_affected(),
-        cutoff,
-    );
+    log_deletion("failures", result, cutoff);
     Ok(())
 }
 
@@ -237,4 +226,14 @@ fn saturating_sub_datetime(dt: DateTime<Utc>, delta: TimeDelta) -> DateTime<Utc>
         Some(d) if d.timestamp() > 0 => d,
         _ => DateTime::UNIX_EPOCH,
     }
+}
+
+fn log_deletion(name: &str, result: PgQueryResult, cutoff: DateTime<Utc>) {
+    let count = result.rows_affected();
+    let level = if count == 0 {
+        log::Level::Debug
+    } else {
+        log::Level::Info
+    };
+    log::log!(level, "Deleted {count} {name} older than {cutoff}",);
 }
