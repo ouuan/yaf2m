@@ -1,5 +1,14 @@
 {
   "extends": [
     "github>ouuan/renovate-config:app"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "minijinja",
+        "minijinja-contrib"
+      ],
+      "groupName": "minijinja"
+    }
   ]
 }
