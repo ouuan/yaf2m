@@ -201,7 +201,12 @@ impl Worker {
             new_items.sort_by_key(|item| Reverse(item.item.updated.or(item.item.published)));
         }
 
-        log::info!(
+        log::log!(
+            if new_items.is_empty() {
+                log::Level::Debug
+            } else {
+                log::Level::Info
+            },
             "Feed group {:?}: {} new items found",
             feed_group.urls,
             new_items.len()
