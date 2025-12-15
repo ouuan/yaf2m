@@ -148,9 +148,9 @@ impl Worker {
         let mut tx = self.pool.begin().await?;
 
         let status = db::try_check_feed_group(&mut *tx, feed_group).await?;
+        log::debug!("Feed group {:?} status: {status:?}", feed_group.urls);
 
         if status == FeedStatus::Wait {
-            log::debug!("Feed group {:?} waiting", feed_group.urls);
             return Ok(());
         }
 
