@@ -282,6 +282,7 @@ impl Worker {
 
 struct FailureTracker {
     failing_hash: Hash,
+    debouncing_hash: Hash,
     debounce_count: u8,
     report_to: Vec<Mailbox>,
     minijinja_env: Environment<'static>,
@@ -310,8 +311,10 @@ impl FailureTracker {
         minijinja_env
             .add_template(FAILURE_REPORT_TEMPLATE_NAME, FAILURE_REPORT_TEMPLATE)
             .expect("failed to add failure report template");
+        let empty_hash = Hasher::new().finalize();
         Self {
-            failing_hash: Hasher::new().finalize(),
+            failing_hash: empty_hash,
+            debouncing_hash: empty_hash,
             debounce_count: 0,
             report_to: Vec::new(),
             minijinja_env,
@@ -331,18 +334,18 @@ impl FailureTracker {
                 hasher
             })
             .finalize();
-        if failing_hash == self.failing_hash {
-            match self.debounce_count {
-                0 => {}
-                1 => match self.send_failure_report(failures, mailer).await {
-                    Err(e) => log::error!("Failed to send failure report email: {e:?}"),
-                    Ok(_) => self.debounce_count = 0,
-                },
-                _ => self.debounce_count -= 1,
+        if failing_hash == self.debouncing_hash {
+            if self.debounce_count == 1 && failing_hash != self.failing_hash {
+                if let Err(e) = self.send_failure_report(failures, mailer).await {
+                    log::error!("Failed to send failure report email: {e:?}");
+                    return;
+                }
+                self.failing_hash = failing_hash;
             }
+            self.debounce_count = self.debounce_count.saturating_sub(1);
         } else {
             log::info!("Failing feed groups changed ({} failures)", failures.len(),);
-            self.failing_hash = failing_hash;
+            self.debouncing_hash = failing_hash;
             self.debounce_count = Self::DEBOUNCE_TIMES;
         }
     }
