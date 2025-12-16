@@ -24,8 +24,10 @@ pub struct FetchedFeed {
 
 pub async fn fetch_feed(url: &str, settings: &Settings) -> Result<FetchedFeed> {
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+    let retry = RetryTransientMiddleware::new_with_policy(retry_policy)
+        .with_retry_log_level(tracing::Level::INFO);
     let client = ClientBuilder::new(reqwest::Client::new())
-        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .with(retry)
         .build();
 
     let response = client

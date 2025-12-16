@@ -3833,6 +3833,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "toml",
+ "tracing",
 ]
 
 [[package]]
