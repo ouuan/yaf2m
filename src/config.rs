@@ -123,7 +123,9 @@ impl TemplateSource {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Filter {
+    #[serde(alias = "all")]
     And(Vec<Self>),
+    #[serde(alias = "any")]
     Or(Vec<Self>),
     Not(Box<Self>),
     TitleRegex(String),

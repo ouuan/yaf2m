@@ -9,7 +9,7 @@ Send email alerts or digests when your RSS/Atom feeds update.
 - **Flexible Per-Feed Settings**: Settings (recipients, templates, update keys, etc.) can be set globally or overridden for each feed group.
 - **Custom Update Keys**: Detect updates using traditional GUIDs or any custom content via MiniJinja expressions, allowing notification on any change you care about.
 - **Customizable Email Templates**: Use MiniJinja templates for email subject and body.
-- **Advanced Filtering**: Filter feed items using logical combinations (`and`, `or`, `not`), regular expressions, or MiniJinja expressions for fine-grained control.
+- **Advanced Filtering**: Filter feed items using logical combinations (`and`/`all`, `or`/`any`, `not`), regular expressions, or MiniJinja expressions for fine-grained control.
 - **Notification On Error**: Send notifications when feeds are not working.
 - **HTML Sanitization**: Sanitize feed HTML content for safer emails.
 
@@ -94,12 +94,14 @@ url = "https://blog.rust-lang.org/feed.xml"
 # sanitize = false
 # sort-by-last-modified = true
 # http-headers.user-agent = "xxx"
-[[feeds.filter.or]]
-title-regex = '^Announcing'
-[[feeds.filter.or]]
-and = [
-    { not.body-regex = 'foo' },
-    { jinja-expr = 'item.author.name is match("John")' },
+feeds.filter.any = [
+  { title-regex = '^Announcing' },
+  {
+    all = [
+      { not.body-regex = 'foo' },
+      { jinja-expr = 'item.author.name is match("John")' },
+    ],
+  },
 ]
 ```
 
@@ -141,7 +143,7 @@ and = [
 -   `filter`: Filter feed items. Can be one of:
     -   `title-regex` / `body-regex` / `regex`: Regular expression match for title / body / both.
     -   `jinja-expr`: Evaluated as MiniJinja expression to see if it's true.
-    -   `and: [..]` / `or: [..]` / `not: {..}`: Logic combination.
+    -   `and: [..]` (`all: [..]`) / `or: [..]` (`any: [..]`) / `not: {..}`: Logic combination.
 
 ---
 
