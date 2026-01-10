@@ -23,7 +23,7 @@ ouroboros = "=0.18.5"
 regex = "=1.12.2"
 reqwest = { version = "=0.12.28", default-features = false, features = ["charset", "http2", "system-proxy", "rustls-tls-webpki-roots"] }
 reqwest-middleware = "=0.4.2"
-reqwest-retry = "=0.8.0"
+reqwest-retry = "=0.9.0"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_with = "=3.16.1"
 sqlx = { version = "=0.8.6", features = ["postgres", "runtime-tokio", "chrono"] }
