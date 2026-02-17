@@ -99,7 +99,7 @@ feeds.filter.any = [
   {
     all = [
       { not.body-regex = 'foo' },
-      { jinja-expr = 'item.author.name is match("John")' },
+      { jinja-expr = "item.authors | selectattr('name', 'equalto', 'John') | list | length > 0" },
     ],
   },
 ]
