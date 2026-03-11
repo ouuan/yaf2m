@@ -13,7 +13,7 @@ jobs:
           username: ouuan
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           push: true
           tags: ouuan/yaf2m:latest
