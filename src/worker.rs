@@ -38,8 +38,10 @@ impl Worker {
         let this = Arc::new(self);
         let mut feeds = Vec::new();
         let mut feed_map = HashMap::new();
+        let mut failure_retry_count_by_feed = HashMap::new();
         let mut feed_hashes = Vec::new();
         let mut keep_old = TimeDelta::default();
+        let mut default_failure_retry_count = 2usize;
         let mut last_modified = SystemTime::UNIX_EPOCH;
         let mut failure_tracker = FailureTracker::new();
 
@@ -53,11 +55,16 @@ impl Worker {
                 log::info!("Config file update reloaded");
                 feeds = config.feeds.into_iter().map(Arc::new).collect();
                 feed_map = feeds.iter().map(|feed| (feed.urls_hash, feed)).collect();
+                failure_retry_count_by_feed = feeds
+                    .iter()
+                    .map(|feed| (feed.urls_hash, feed.settings.failure_retry_count))
+                    .collect();
                 feed_hashes = feeds
                     .iter()
                     .map(|feed| feed.urls_hash.as_bytes().to_vec())
                     .collect();
                 keep_old = config.global_settings.keep_old;
+                default_failure_retry_count = config.global_settings.failure_retry_count;
                 failure_tracker.set_report_to(config.error_report_to);
                 last_modified = modified;
             }
@@ -97,7 +104,13 @@ impl Worker {
                 }
             }
 
-            match db::get_failing_feeds(&this.pool).await {
+            match db::get_failing_feeds(
+                &this.pool,
+                &failure_retry_count_by_feed,
+                default_failure_retry_count,
+            )
+            .await
+            {
                 Ok(failures) => {
                     let failures = failures
                         .into_iter()

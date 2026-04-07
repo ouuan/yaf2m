@@ -294,6 +294,7 @@ mod tests {
                 keep_old: TimeDelta::weeks(1),
                 timeout: Duration::from_secs(30),
                 max_mails_per_check: 5,
+                failure_retry_count: 2,
                 sanitize: true,
                 sort_by_last_modified: false,
                 http_headers: Default::default(),

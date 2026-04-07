@@ -6,6 +6,7 @@ use color_eyre::Result;
 use color_eyre::eyre::{Report, WrapErr, eyre};
 use sqlx::postgres::PgQueryResult;
 use sqlx::{PgExecutor, PgPool};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 pub async fn init_db(pool: &PgPool) -> Result<()> {
@@ -212,12 +213,27 @@ pub async fn delete_old_failures(e: impl PgExecutor<'_>, keep_old: TimeDelta) ->
     Ok(())
 }
 
-pub async fn get_failing_feeds(e: impl PgExecutor<'_>) -> Result<Vec<(Hash, String)>> {
-    sqlx::query!("SELECT urls_hash, error FROM failures WHERE fail_count >= 2")
+pub async fn get_failing_feeds(
+    e: impl PgExecutor<'_>,
+    failure_retry_count_by_feed: &HashMap<Hash, usize>,
+    default_failure_retry_count: usize,
+) -> Result<Vec<(Hash, String)>> {
+    let effective_default = default_failure_retry_count.max(1);
+    sqlx::query!("SELECT urls_hash, error, fail_count FROM failures")
         .fetch_all(e)
         .await?
         .into_iter()
-        .map(|row| Ok((Hash::from_slice(&row.urls_hash)?, row.error)))
+        .map(|row| {
+            let urls_hash = Hash::from_slice(&row.urls_hash)?;
+            let failure_retry_count = failure_retry_count_by_feed
+                .get(&urls_hash)
+                .copied()
+                .unwrap_or(effective_default)
+                .max(1);
+            Ok((row.fail_count as u64 >= failure_retry_count as u64)
+                .then_some((urls_hash, row.error)))
+        })
+        .filter_map(Result::transpose)
         .collect()
 }
 
