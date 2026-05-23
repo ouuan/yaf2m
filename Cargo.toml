@@ -7,7 +7,7 @@ description = "Yet Another Feed to Mail: Send email on RSS feed update."
 
 [dependencies]
 ammonia = "=4.1.2"
-ansi-to-html = "=0.2.2"
+ansi-to-html = "=0.2.3"
 blake3 = "=1.8.5"
 chrono = "=0.4.44"
 color-eyre = "=0.6.5"
