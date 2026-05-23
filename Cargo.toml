@@ -22,7 +22,7 @@ minijinja-contrib = { version = "=2.19.0", features = ["datetime", "timezone"] }
 ouroboros = "=0.18.5"
 regex = "=1.12.3"
 reqwest = { version = "=0.13.3", default-features = false, features = ["charset", "http2", "system-proxy", "gzip", "rustls"] }
-reqwest-middleware = "=0.5.1"
+reqwest-middleware = "=0.5.2"
 reqwest-retry = "=0.9.1"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_with = "=3.19.0"
