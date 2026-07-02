@@ -26,7 +26,7 @@ reqwest-middleware = "=0.5.2"
 reqwest-retry = "=0.9.1"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_with = "=3.19.0"
-sqlx = { version = "=0.8.6", features = ["postgres", "runtime-tokio", "chrono"] }
+sqlx = { version = "=0.9.0", features = ["postgres", "runtime-tokio", "chrono"] }
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "time"] }
 toml = "=1.1.2"
 tracing = "=0.1.44"
