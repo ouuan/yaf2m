@@ -25,6 +25,7 @@ const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MAILS_PER_CHECK: usize = 5;
 const DEFAULT_FAILURE_RETRY_COUNT: usize = 2;
+const DEFAULT_RETRY_INTERVAL: TimeDelta = TimeDelta::zero();
 const DEFAULT_SANITIZE: bool = true;
 const DEFAULT_SORT_BY_LAST_MODIFIED: bool = false;
 
@@ -86,6 +87,7 @@ pub struct Settings {
     pub timeout: Duration,
     pub max_mails_per_check: usize,
     pub failure_retry_count: usize,
+    pub retry_interval: TimeDelta,
     pub sanitize: bool,
     pub sort_by_last_modified: bool,
     pub http_headers: Arc<HeaderMap>,
@@ -206,6 +208,8 @@ struct OptionalSettings {
     max_mails_per_check: Option<usize>,
     #[serde(alias = "failure-retry-times")]
     failure_retry_count: Option<usize>,
+    #[serde_as(as = "Option<HumanTimeDelta>")]
+    retry_interval: Option<TimeDelta>,
     sanitize: Option<bool>,
     sort_by_last_modified: Option<bool>,
     #[serde_as(as = "Option<AsHeaderMap>")]
@@ -249,6 +253,7 @@ impl OptionalSettings {
             failure_retry_count: self
                 .failure_retry_count
                 .unwrap_or(DEFAULT_FAILURE_RETRY_COUNT),
+            retry_interval: self.retry_interval.unwrap_or(DEFAULT_RETRY_INTERVAL),
             sanitize: self.sanitize.unwrap_or(DEFAULT_SANITIZE),
             sort_by_last_modified: self
                 .sort_by_last_modified
@@ -310,6 +315,10 @@ impl FeedConfig {
             .settings
             .failure_retry_count
             .unwrap_or(global.failure_retry_count);
+        let retry_interval = self
+            .settings
+            .retry_interval
+            .unwrap_or(global.retry_interval);
         let sanitize = self.settings.sanitize.unwrap_or(global.sanitize);
         let sort_by_last_modified = self
             .settings
@@ -365,6 +374,7 @@ impl FeedConfig {
                 timeout,
                 max_mails_per_check,
                 failure_retry_count,
+                retry_interval,
                 sanitize,
                 sort_by_last_modified,
                 http_headers,

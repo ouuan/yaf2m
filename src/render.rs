@@ -295,6 +295,7 @@ mod tests {
                 timeout: Duration::from_secs(30),
                 max_mails_per_check: 5,
                 failure_retry_count: 2,
+                retry_interval: TimeDelta::zero(),
                 sanitize: true,
                 sort_by_last_modified: false,
                 http_headers: Default::default(),

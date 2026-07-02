@@ -92,6 +92,7 @@ pub async fn try_check_feed_group(
 ) -> Result<FeedStatus> {
     let now = Utc::now();
     let update_cutoff = saturating_sub_datetime(now, feed_config.settings.interval);
+    let retry_cutoff = saturating_sub_datetime(now, feed_config.settings.retry_interval);
 
     sqlx::query_scalar!(
         r#"
@@ -100,7 +101,14 @@ pub async fn try_check_feed_group(
             VALUES ($1, $2, $3, $3)
             ON CONFLICT (urls_hash)
             DO UPDATE SET last_check = $3, criteria_hash = $2
-                WHERE feed_groups.last_check < $4 OR feed_groups.criteria_hash IS DISTINCT FROM $2
+                WHERE (
+                        feed_groups.last_check < $4
+                        AND NOT EXISTS (
+                            SELECT 1 FROM failures
+                            WHERE failures.urls_hash = $1 AND failures.fail_time > $5
+                        )
+                    )
+                    OR feed_groups.criteria_hash IS DISTINCT FROM $2
             RETURNING
                 (xmax = 0) AS new_feed,
                 (OLD.criteria_hash IS DISTINCT FROM $2) AS new_criteria
@@ -117,6 +125,7 @@ pub async fn try_check_feed_group(
         feed_config.criteria_hash.as_bytes(),
         now,
         update_cutoff,
+        retry_cutoff,
     )
     .fetch_one(e)
     .await?
