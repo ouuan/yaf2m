@@ -69,7 +69,7 @@ update-key = 'item.id'
 interval = '1h'
 keep-old = '1w'
 timeout = '30s'
-failure-retry-count = 2
+retry-count = 2
 retry-interval = '0s'
 sanitize = true
 sort-by-last-modified = false
@@ -93,7 +93,7 @@ url = "https://blog.rust-lang.org/feed.xml"
 # interval = '1d'
 # keep-old = '2w'
 # timeout = '1m'
-# failure-retry-count = 3
+# retry-count = 3
 # retry-interval = '10m'
 # sanitize = false
 # sort-by-last-modified = true
@@ -137,7 +137,7 @@ feeds.filter.any = [
 -   `interval`: Check feed update once per interval.
 -   `keep-old`: Prune old data in the database.
 -   `timeout`: Timeout when fetching the feed.
--   `failure-retry-count`: Number of consecutive failures before a feed group is considered failing.
+-   `retry-count`: Number of consecutive failures before a feed group is considered failing.
 -   `retry-interval`: Minimum wait after a failure before retrying a failing feed group. By default (`0s`), failing feeds are retried every check cycle (about once per minute).
 -   `sanitize`: Whether to sanitize HTML in feed contents or keep the HTML as it is.
 -   `sort-by-last-modified`: Whether to sort items in a digest by their last modified time.

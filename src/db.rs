@@ -224,23 +224,22 @@ pub async fn delete_old_failures(e: impl PgExecutor<'_>, keep_old: TimeDelta) ->
 
 pub async fn get_failing_feeds(
     e: impl PgExecutor<'_>,
-    failure_retry_count_by_feed: &HashMap<Hash, usize>,
-    default_failure_retry_count: usize,
+    retry_count_by_feed: &HashMap<Hash, usize>,
+    default_retry_count: usize,
 ) -> Result<Vec<(Hash, String)>> {
-    let effective_default = default_failure_retry_count.max(1);
+    let effective_default = default_retry_count.max(1);
     sqlx::query!("SELECT urls_hash, error, fail_count FROM failures")
         .fetch_all(e)
         .await?
         .into_iter()
         .map(|row| {
             let urls_hash = Hash::from_slice(&row.urls_hash)?;
-            let failure_retry_count = failure_retry_count_by_feed
+            let retry_count = retry_count_by_feed
                 .get(&urls_hash)
                 .copied()
                 .unwrap_or(effective_default)
                 .max(1);
-            Ok((row.fail_count as u64 >= failure_retry_count as u64)
-                .then_some((urls_hash, row.error)))
+            Ok((row.fail_count as u64 >= retry_count as u64).then_some((urls_hash, row.error)))
         })
         .filter_map(Result::transpose)
         .collect()
