@@ -16,7 +16,7 @@ feed-rs = "=2.3.1"
 humantime = "=2.3.0"
 humantime-serde = "=1.1.1"
 lettre = { version = "=0.11.22", default-features = false, features = ["builder", "pool", "smtp-transport", "serde", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
-log = "=0.4.29"
+log = "=0.4.33"
 minijinja = { version = "=2.20.0", features = ["loader"] }
 minijinja-contrib = { version = "=2.20.0", features = ["datetime", "timezone"] }
 ouroboros = "=0.18.5"
