@@ -20,7 +20,7 @@ log = "=0.4.33"
 minijinja = { version = "=2.24.0", features = ["loader"] }
 minijinja-contrib = { version = "=2.24.0", features = ["datetime", "html_entities", "timezone"] }
 ouroboros = "=0.18.5"
-regex = "=1.12.3"
+regex = "=1.13.1"
 reqwest = { version = "=0.13.4", default-features = false, features = ["charset", "http2", "system-proxy", "gzip", "rustls"] }
 reqwest-middleware = "=0.5.2"
 reqwest-retry = "=0.9.1"
