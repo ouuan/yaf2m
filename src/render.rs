@@ -955,7 +955,7 @@ mod tests {
         };
 
         let rendered = renderer.render(TemplateName::ItemSubject, ctx)?;
-        assert_eq!(rendered, "Result: none");
+        assert_eq!(rendered, "Result: None");
         Ok(())
     }
 
