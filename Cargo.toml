@@ -15,7 +15,7 @@ env_logger = "=0.11.11"
 feed-rs = "=2.4.0"
 humantime = "=2.4.0"
 humantime-serde = "=1.1.1"
-lettre = { version = "=0.11.22", default-features = false, features = ["builder", "pool", "smtp-transport", "serde", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
+lettre = { version = "=0.11.23", default-features = false, features = ["builder", "pool", "smtp-transport", "serde", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
 log = "=0.4.33"
 minijinja = { version = "=2.24.0", features = ["loader"] }
 minijinja-contrib = { version = "=2.24.0", features = ["datetime", "html_entities", "timezone"] }
