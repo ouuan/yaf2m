@@ -13,6 +13,21 @@ pub struct FeedItemContext<'a> {
     pub item: &'a Entry,
 }
 
+/// What the templates see: the same `{ feed, item }` shape, with `item.diff` grafted on.
+#[derive(Debug, Serialize)]
+pub struct ItemRenderContext<'a> {
+    pub feed: &'a Feed,
+    pub item: ItemWithDiff<'a>,
+}
+
+/// `Entry` has no rename/skip attributes, so flattening keeps every `item.*` field intact.
+#[derive(Debug, Serialize)]
+pub struct ItemWithDiff<'a> {
+    #[serde(flatten)]
+    pub entry: &'a Entry,
+    pub diff: Option<String>,
+}
+
 #[self_referencing]
 #[derive(Debug)]
 pub struct FetchedFeed {

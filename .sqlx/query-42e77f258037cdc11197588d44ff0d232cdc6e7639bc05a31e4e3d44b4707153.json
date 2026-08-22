@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO feed_item_contents (urls_hash, diff_hash, content, last_seen)\n        VALUES ($1, $2, $3, $4)\n        ON CONFLICT (urls_hash, diff_hash) DO UPDATE\n            SET content = CASE WHEN $5 THEN EXCLUDED.content ELSE feed_item_contents.content END,\n                last_seen = EXCLUDED.last_seen\n        RETURNING OLD.content AS \"old_content?\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "old_content?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Timestamptz",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "42e77f258037cdc11197588d44ff0d232cdc6e7639bc05a31e4e3d44b4707153"
+}

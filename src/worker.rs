@@ -1,7 +1,8 @@
 use crate::config::{FeedGroup, load_config};
 use crate::db::{self, FeedStatus};
+use crate::diff::render_diff;
 use crate::email::{Mail, Mailer, send_email_with_backoff};
-use crate::feed::fetch_feed;
+use crate::feed::{ItemRenderContext, ItemWithDiff, fetch_feed};
 use crate::render::{Renderer, TemplateName};
 use blake3::{Hash, Hasher};
 use chrono::{TimeDelta, Utc};
@@ -201,13 +202,36 @@ impl Worker {
                 render!("{{ item }}", item => item.item)
             );
 
+            // The stored content is overwritten only when the item is actually notified, so a
+            // diff always covers everything since the last mail about this item. The overwrite
+            // rides on this transaction, so a failed send leaves it for the next cycle.
+            let diff = match renderer.diff_input(item)? {
+                Some((diff_hash, content)) => db::upsert_item_content(
+                    &mut *tx,
+                    feed_group.urls_hash,
+                    diff_hash,
+                    &content,
+                    new,
+                )
+                .await?
+                .filter(|_| new)
+                .and_then(|old| render_diff(&old, &content, feed_group.settings.diff_options)),
+                None => None,
+            };
+
             if new {
-                new_items.push(item);
+                new_items.push(ItemRenderContext {
+                    feed: item.feed,
+                    item: ItemWithDiff {
+                        entry: item.item,
+                        diff,
+                    },
+                });
             }
         }
 
         if feed_group.settings.sort_by_last_modified {
-            new_items.sort_by_key(|item| Reverse(item.item.updated.or(item.item.published)));
+            new_items.sort_by_key(|c| Reverse(c.item.entry.updated.or(c.item.entry.published)));
         }
 
         log::log!(
@@ -231,7 +255,7 @@ impl Worker {
                     .iter()
                     .map(|feed| feed.borrow_feed())
                     .collect::<Vec<_>>();
-                let ctx = minijinja::context! { feeds => feeds, items => new_items };
+                let ctx = minijinja::context! { feeds => feeds, items => &new_items };
                 let subject_prefix = match status {
                     FeedStatus::NewFeed => "[New Feed] ",
                     FeedStatus::NewCriteria => "[New Criteria] ",
@@ -245,7 +269,7 @@ impl Worker {
                 vec![Mail { subject, body }]
             } else {
                 new_items
-                    .into_iter()
+                    .iter()
                     .map(|item| {
                         let subject = renderer.render(TemplateName::ItemSubject, item)?;
                         let body = renderer.render(TemplateName::ItemBody, item)?;
@@ -282,6 +306,9 @@ impl Worker {
         db::clear_failure(&mut *tx, feed_group.urls_hash).await?;
 
         db::delete_old_items(&mut *tx, feed_group.urls_hash, feed_group.settings.keep_old).await?;
+
+        db::delete_old_item_contents(&mut *tx, feed_group.urls_hash, feed_group.settings.keep_old)
+            .await?;
 
         tx.commit().await?;
 

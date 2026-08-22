@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod diff;
 mod email;
 mod feed;
 mod render;

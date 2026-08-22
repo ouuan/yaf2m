@@ -171,6 +171,58 @@ pub async fn delete_old_items(
     Ok(())
 }
 
+/// Store `content` under `(urls_hash, diff_hash)` and return the content it replaced.
+///
+/// `overwrite = false` only seeds a missing row and touches `last_seen`, so the stored content
+/// always stays at whatever was last mailed out.
+pub async fn upsert_item_content(
+    e: impl PgExecutor<'_>,
+    urls_hash: Hash,
+    diff_hash: Hash,
+    content: &str,
+    overwrite: bool,
+) -> Result<Option<String>> {
+    // `DO UPDATE` must stay unconditional: a `WHERE content IS DISTINCT FROM EXCLUDED.content`
+    // would return no row on a no-op and break `fetch_one`. The `"old_content?"` override is
+    // load-bearing too, since sqlx would otherwise infer `String` from the NOT NULL column and
+    // hit `UnexpectedNullError` on the first plain insert.
+    let old_content = sqlx::query_scalar!(
+        r#"
+        INSERT INTO feed_item_contents (urls_hash, diff_hash, content, last_seen)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (urls_hash, diff_hash) DO UPDATE
+            SET content = CASE WHEN $5 THEN EXCLUDED.content ELSE feed_item_contents.content END,
+                last_seen = EXCLUDED.last_seen
+        RETURNING OLD.content AS "old_content?"
+        "#,
+        urls_hash.as_bytes(),
+        diff_hash.as_bytes(),
+        content,
+        Utc::now(),
+        overwrite,
+    )
+    .fetch_one(e)
+    .await?;
+    Ok(old_content)
+}
+
+pub async fn delete_old_item_contents(
+    e: impl PgExecutor<'_>,
+    urls_hash: Hash,
+    keep_old: TimeDelta,
+) -> Result<()> {
+    let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
+    let result = sqlx::query!(
+        "DELETE FROM feed_item_contents WHERE urls_hash = $1 AND last_seen < $2",
+        urls_hash.as_bytes(),
+        cutoff
+    )
+    .execute(e)
+    .await?;
+    log_deletion("feed item contents", result, cutoff);
+    Ok(())
+}
+
 pub async fn set_feed_group_update_time(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
     sqlx::query!(
         "UPDATE feed_groups SET last_update = $1 WHERE urls_hash = $2",

@@ -1,3 +1,4 @@
+use crate::diff::{DiffContext, DiffContextKeyword, DiffGranularity, DiffOptions};
 use blake3::{Hash, Hasher, hash};
 use chrono::TimeDelta;
 use color_eyre::eyre::eyre;
@@ -20,6 +21,10 @@ const DEFAULT_DIGEST_SUBJECT: &str = include_str!("templates/digest-subject.txt"
 const DEFAULT_ITEM_BODY: &str = include_str!("templates/item-body.html");
 const DEFAULT_DIGEST_BODY: &str = include_str!("templates/digest-body.html");
 const DEFAULT_UPDATE_KEY: &str = "item.id";
+const DEFAULT_DIFF_CONTENT: &str = "item.content.body or item.summary.content or ''";
+const DEFAULT_DIFF_GRANULARITY: DiffGranularity = DiffGranularity::Word;
+const DEFAULT_DIFF_CONTEXT: DiffContext = DiffContext::Keyword(DiffContextKeyword::Auto);
+const DEFAULT_DIFF_STRIP_TAGS: bool = false;
 const DEFAULT_INTERVAL: TimeDelta = TimeDelta::hours(1);
 const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -82,6 +87,9 @@ pub struct Settings {
     pub digest_body: Arc<TemplateSource>,
     pub template_args: Arc<Value>,
     pub update_keys: Arc<[String]>,
+    pub diff_keys: Arc<[String]>,
+    pub diff_content: Arc<str>,
+    pub diff_options: DiffOptions,
     pub interval: TimeDelta,
     pub keep_old: TimeDelta,
     pub timeout: Duration,
@@ -198,6 +206,15 @@ struct OptionalSettings {
     #[serde_as(as = "Option<OneOrMany<_>>")]
     #[serde(alias = "update-key")]
     update_keys: Option<Vec<String>>,
+    #[serde_as(as = "Option<OneOrMany<_>>")]
+    #[serde(alias = "diff-key")]
+    diff_keys: Option<Vec<String>>,
+    // Flat rather than a nested `[settings.diff]` table, so that a feed overriding one diff knob
+    // inherits the rest from `[settings]` instead of resetting them to the built-in defaults.
+    diff_content: Option<String>,
+    diff_granularity: Option<DiffGranularity>,
+    diff_context: Option<DiffContext>,
+    diff_strip_tags: Option<bool>,
     #[serde_as(as = "Option<HumanTimeDelta>")]
     interval: Option<TimeDelta>,
     #[serde_as(as = "Option<HumanTimeDelta>")]
@@ -244,6 +261,16 @@ impl OptionalSettings {
                 .update_keys
                 .unwrap_or_else(|| vec![DEFAULT_UPDATE_KEY.to_string()])
                 .into(),
+            diff_keys: self.diff_keys.unwrap_or_default().into(),
+            diff_content: self
+                .diff_content
+                .unwrap_or_else(|| DEFAULT_DIFF_CONTENT.to_string())
+                .into(),
+            diff_options: DiffOptions {
+                granularity: self.diff_granularity.unwrap_or(DEFAULT_DIFF_GRANULARITY),
+                context: self.diff_context.unwrap_or(DEFAULT_DIFF_CONTEXT),
+                strip_tags: self.diff_strip_tags.unwrap_or(DEFAULT_DIFF_STRIP_TAGS),
+            },
             interval: self.interval.unwrap_or(DEFAULT_INTERVAL),
             keep_old: self.keep_old.unwrap_or(DEFAULT_KEEP_OLD),
             timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
@@ -302,6 +329,22 @@ impl FeedConfig {
             None => Arc::clone(&global.template_args),
         };
         let update_keys = pick(self.settings.update_keys, &global.update_keys);
+        let diff_keys = pick(self.settings.diff_keys, &global.diff_keys);
+        let diff_content = pick(self.settings.diff_content, &global.diff_content);
+        let diff_options = DiffOptions {
+            granularity: self
+                .settings
+                .diff_granularity
+                .unwrap_or(global.diff_options.granularity),
+            context: self
+                .settings
+                .diff_context
+                .unwrap_or(global.diff_options.context),
+            strip_tags: self
+                .settings
+                .diff_strip_tags
+                .unwrap_or(global.diff_options.strip_tags),
+        };
         let interval = self.settings.interval.unwrap_or(global.interval);
         let keep_old = self.settings.keep_old.unwrap_or(global.keep_old);
         let timeout = self.settings.timeout.unwrap_or(global.timeout);
@@ -364,6 +407,9 @@ impl FeedConfig {
                 digest_body,
                 template_args,
                 update_keys,
+                diff_keys,
+                diff_content,
+                diff_options,
                 interval,
                 keep_old,
                 timeout,
@@ -403,5 +449,138 @@ where
     match local {
         Some(owned) => Arc::from(owned),
         None => Arc::clone(global),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolve_one(toml_src: &str) -> Settings {
+        let config: ConfigFile = toml::from_str(toml_src).expect("failed to parse config");
+        let global = config.settings.with_default();
+        config
+            .feeds
+            .into_iter()
+            .next()
+            .expect("expected a feed group")
+            .resolve(&global)
+            .settings
+    }
+
+    #[test]
+    fn diff_context_accepts_an_integer_and_the_keywords() {
+        let settings = resolve_one(
+            r#"
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            diff-context = 3
+            "#,
+        );
+        assert!(matches!(
+            settings.diff_options.context,
+            DiffContext::Count(3)
+        ));
+
+        let settings = resolve_one(
+            r#"
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            diff-context = 'full'
+            "#,
+        );
+        assert!(matches!(
+            settings.diff_options.context,
+            DiffContext::Keyword(DiffContextKeyword::Full)
+        ));
+
+        let settings = resolve_one(
+            r#"
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            "#,
+        );
+        assert!(matches!(
+            settings.diff_options.context,
+            DiffContext::Keyword(DiffContextKeyword::Auto)
+        ));
+    }
+
+    #[test]
+    fn diff_context_rejects_garbage_with_a_usable_message() {
+        let error = toml::from_str::<ConfigFile>(
+            r#"
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            diff-context = 'lots'
+            "#,
+        )
+        .expect_err("expected a parse error");
+        assert!(
+            error
+                .to_string()
+                .contains(r#"a non-negative integer, "full", or "auto""#),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn diff_settings_override_one_knob_at_a_time() {
+        let settings = resolve_one(
+            r#"
+            [settings]
+            diff-key = 'item.id'
+            diff-context = 7
+            diff-granularity = 'line'
+            diff-strip-tags = true
+
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            diff-content = 'item.title.content'
+            "#,
+        );
+
+        assert_eq!(&*settings.diff_content, "item.title.content");
+        assert_eq!(&*settings.diff_keys, ["item.id".to_string()]);
+        assert!(matches!(
+            settings.diff_options.context,
+            DiffContext::Count(7)
+        ));
+        assert_eq!(settings.diff_options.granularity, DiffGranularity::Line);
+        assert!(settings.diff_options.strip_tags);
+    }
+
+    #[test]
+    fn diff_keys_is_empty_by_default() {
+        let settings = resolve_one(
+            r#"
+            [[feeds]]
+            url = 'https://example.com/feed.xml'
+            "#,
+        );
+        assert!(settings.diff_keys.is_empty());
+        assert_eq!(&*settings.diff_content, DEFAULT_DIFF_CONTENT);
+    }
+
+    #[test]
+    fn diff_settings_are_not_part_of_criteria_hash() {
+        let hash_of = |extra: &str| {
+            let config: ConfigFile = toml::from_str(&format!(
+                "[[feeds]]\nurl = 'https://example.com/feed.xml'\n{extra}\n"
+            ))
+            .expect("failed to parse config");
+            let global = config.settings.with_default();
+            config
+                .feeds
+                .into_iter()
+                .next()
+                .expect("expected a feed group")
+                .resolve(&global)
+                .criteria_hash
+        };
+
+        assert_eq!(hash_of(""), hash_of("diff-key = 'item.id'"));
+        assert_eq!(hash_of(""), hash_of("diff-context = 1"));
+        assert_ne!(hash_of(""), hash_of("update-key = 'item.title'"));
     }
 }

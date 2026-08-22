@@ -1,6 +1,6 @@
 use crate::config::{FeedGroup, Filter, TemplateSource};
 use crate::feed::FeedItemContext;
-use blake3::{Hash, Hasher};
+use blake3::{Hash, Hasher, hash};
 use color_eyre::{Result, eyre::WrapErr};
 use minijinja::{Environment, Expression, Value};
 use minijinja_contrib::add_to_environment;
@@ -13,9 +13,18 @@ use std::sync::Arc;
 #[self_referencing]
 pub struct Renderer<'a> {
     env: Environment<'a>,
+    /// Salts every `diff_hash` with the diff configuration, so that editing `diff-content` makes
+    /// the old rows unreachable instead of diffing old-format content against new-format content.
+    diff_salt: Hash,
     #[borrows(env)]
     #[covariant]
     update_key_exprs: Vec<Expression<'this, 'a>>,
+    #[borrows(env)]
+    #[covariant]
+    diff_key_exprs: Vec<Expression<'this, 'a>>,
+    #[borrows(env)]
+    #[covariant]
+    diff_content_expr: Option<Expression<'this, 'a>>,
     #[borrows(env)]
     #[covariant]
     filter: Option<CompiledFilter<'this>>,
@@ -76,8 +85,20 @@ impl<'a> Renderer<'a> {
             _ => Ok(None),
         });
 
+        let diff_enabled = !feed.settings.diff_keys.is_empty();
+
+        let diff_salt = {
+            let mut hasher = Hasher::new();
+            hasher.update(hash(feed.settings.diff_content.as_bytes()).as_bytes());
+            for key in feed.settings.diff_keys.iter() {
+                hasher.update(hash(key.as_bytes()).as_bytes());
+            }
+            hasher.finalize()
+        };
+
         Renderer::try_new(
             env,
+            diff_salt,
             |env| {
                 feed.settings
                     .update_keys
@@ -87,6 +108,24 @@ impl<'a> Renderer<'a> {
                             .wrap_err("Failed to compile update key expression")
                     })
                     .collect()
+            },
+            |env| {
+                feed.settings
+                    .diff_keys
+                    .iter()
+                    .map(|key| {
+                        env.compile_expression(key)
+                            .wrap_err("Failed to compile diff key expression")
+                    })
+                    .collect()
+            },
+            |env| {
+                diff_enabled
+                    .then(|| {
+                        env.compile_expression(&feed.settings.diff_content)
+                            .wrap_err("Failed to compile diff content expression")
+                    })
+                    .transpose()
             },
             |env| {
                 feed.filter
@@ -106,18 +145,42 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn update_hash(&self, ctx: &FeedItemContext) -> Result<Hash> {
-        let mut hasher = Hasher::new();
-        for key in self.borrow_update_key_exprs() {
-            let value = key
-                .eval(ctx)
-                .wrap_err("Failed to evaluate update key expression")?;
-            let hash = match value.as_bytes() {
-                Some(bytes) => blake3::hash(bytes),
-                None => blake3::hash(value.to_string().as_bytes()),
-            };
-            hasher.update(hash.as_bytes());
+        // The empty salt keeps these hashes bit-identical to the ones already in `feed_items`.
+        hash_expr_values(self.borrow_update_key_exprs(), ctx, &[], "update key")
+    }
+
+    /// The `diff_hash` identifying this item across content updates, and the content to store
+    /// under it. `None` when `diff-keys` is not configured.
+    pub fn diff_input(&self, ctx: &FeedItemContext) -> Result<Option<(Hash, String)>> {
+        let key_exprs = self.borrow_diff_key_exprs();
+        if key_exprs.is_empty() {
+            return Ok(None);
         }
-        Ok(hasher.finalize())
+
+        let diff_hash = hash_expr_values(
+            key_exprs,
+            ctx,
+            self.borrow_diff_salt().as_bytes(),
+            "diff key",
+        )?;
+
+        let content = match self.borrow_diff_content_expr() {
+            Some(expr) => {
+                let value = expr
+                    .eval(ctx)
+                    .wrap_err("Failed to evaluate diff content expression")?;
+                // Unlike `update_hash`, an absent value must become "" rather than the literal
+                // "none" that `Value::to_string()` produces.
+                if value.is_none() || value.is_undefined() {
+                    String::new()
+                } else {
+                    value.to_string()
+                }
+            }
+            None => String::new(),
+        };
+
+        Ok(Some((diff_hash, content)))
     }
 
     pub fn filter(&self, ctx: &FeedItemContext) -> Result<bool> {
@@ -125,6 +188,27 @@ impl<'a> Renderer<'a> {
             .as_ref()
             .map_or(Ok(true), |f| f.evaluate(ctx))
     }
+}
+
+fn hash_expr_values(
+    exprs: &[Expression],
+    ctx: &FeedItemContext,
+    salt: &[u8],
+    what: &str,
+) -> Result<Hash> {
+    let mut hasher = Hasher::new();
+    hasher.update(salt);
+    for expr in exprs {
+        let value = expr
+            .eval(ctx)
+            .wrap_err_with(|| format!("Failed to evaluate {what} expression"))?;
+        let value_hash = match value.as_bytes() {
+            Some(bytes) => hash(bytes),
+            None => hash(value.to_string().as_bytes()),
+        };
+        hasher.update(value_hash.as_bytes());
+    }
+    Ok(hasher.finalize())
 }
 
 fn minijinja_regex(pattern: &str) -> Result<Regex, minijinja::Error> {
@@ -251,8 +335,8 @@ impl<'a> CompiledFilter<'a> {
 mod tests {
     use super::*;
     use crate::config::{FeedGroup, Settings, TemplateSource};
+    use crate::diff::{DiffContext, DiffContextKeyword, DiffGranularity, DiffOptions};
     use crate::feed::FeedItemContext;
-    use blake3::hash;
     use chrono::TimeDelta;
     use color_eyre::Result;
     use feed_rs::model::{Content, Entry, Feed, FeedType, Text};
@@ -290,6 +374,13 @@ mod tests {
                 digest_body: Arc::new(TemplateSource::Inline("digest-body".into())),
                 template_args: Arc::new(Value::from_serialize(&template_args)),
                 update_keys: update_keys.into(),
+                diff_keys: Vec::new().into(),
+                diff_content: "item.content.body or item.summary.content or ''".into(),
+                diff_options: DiffOptions {
+                    granularity: DiffGranularity::Word,
+                    context: DiffContext::Keyword(DiffContextKeyword::Auto),
+                    strip_tags: false,
+                },
                 interval: TimeDelta::hours(1),
                 keep_old: TimeDelta::weeks(1),
                 timeout: Duration::from_secs(30),
@@ -301,6 +392,12 @@ mod tests {
                 http_headers: Default::default(),
             },
         }
+    }
+
+    fn with_diff(mut feed_group: FeedGroup, keys: Vec<String>, content: &str) -> FeedGroup {
+        feed_group.settings.diff_keys = keys.into();
+        feed_group.settings.diff_content = content.into();
+        feed_group
     }
 
     fn sample_feed_and_item(id: &str, title: &str, summary: Option<&str>) -> (Feed, Entry) {
@@ -402,6 +499,203 @@ mod tests {
         let actual = renderer.update_hash(&ctx)?;
 
         assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn diff_input_is_none_when_diff_keys_are_empty() -> Result<()> {
+        let feed_group = build_feed_group(
+            TemplateSource::Inline("unused".into()),
+            vec!["item.id".into()],
+            None,
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-1", "Title", Some("Summary"));
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        assert!(renderer.diff_input(&ctx)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn diff_hash_uses_compiled_expressions_in_order() -> Result<()> {
+        let feed_group = with_diff(
+            build_feed_group(
+                TemplateSource::Inline("unused".into()),
+                vec!["item.id".into()],
+                None,
+            ),
+            vec!["item.id".into(), "feed.id".into()],
+            "item.summary.content",
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-42", "Title", Some("Body"));
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let salt = {
+            let mut hasher = Hasher::new();
+            hasher.update(hash(b"item.summary.content").as_bytes());
+            hasher.update(hash(b"item.id").as_bytes());
+            hasher.update(hash(b"feed.id").as_bytes());
+            hasher.finalize()
+        };
+        let expected = {
+            let mut hasher = Hasher::new();
+            hasher.update(salt.as_bytes());
+            hasher.update(hash(b"item-42").as_bytes());
+            hasher.update(hash(b"feed-id").as_bytes());
+            hasher.finalize()
+        };
+
+        let (diff_hash, content) = renderer.diff_input(&ctx)?.expect("expected a diff input");
+
+        assert_eq!(diff_hash, expected);
+        assert_eq!(content, "Body");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_hash_changes_when_the_diff_content_source_changes() -> Result<()> {
+        let build = |content: &str| {
+            with_diff(
+                build_feed_group(
+                    TemplateSource::Inline("unused".into()),
+                    vec!["item.id".into()],
+                    None,
+                ),
+                vec!["item.id".into()],
+                content,
+            )
+        };
+
+        let (feed, item) = sample_feed_and_item("item-1", "Title", Some("Summary"));
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let by_summary = build("item.summary.content");
+        let by_title = build("item.title.content");
+
+        let a = Renderer::from_feed(&by_summary)?
+            .diff_input(&ctx)?
+            .expect("expected a diff input")
+            .0;
+        let b = Renderer::from_feed(&by_title)?
+            .diff_input(&ctx)?
+            .expect("expected a diff input")
+            .0;
+
+        assert_ne!(a, b);
+        Ok(())
+    }
+
+    #[test]
+    fn update_hash_is_unaffected_by_the_diff_salt() -> Result<()> {
+        let (feed, item) = sample_feed_and_item("item-42", "Title", Some("Body"));
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        let plain = build_feed_group(
+            TemplateSource::Inline("unused".into()),
+            vec!["item.id".into()],
+            None,
+        );
+        let diffing = with_diff(
+            build_feed_group(
+                TemplateSource::Inline("unused".into()),
+                vec!["item.id".into()],
+                None,
+            ),
+            vec!["item.id".into()],
+            "item.summary.content",
+        );
+
+        let expected = {
+            let mut hasher = Hasher::new();
+            hasher.update(hash(b"item-42").as_bytes());
+            hasher.finalize()
+        };
+
+        assert_eq!(Renderer::from_feed(&plain)?.update_hash(&ctx)?, expected);
+        assert_eq!(Renderer::from_feed(&diffing)?.update_hash(&ctx)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn diff_content_falls_back_from_body_to_summary_to_empty() -> Result<()> {
+        let build = || {
+            with_diff(
+                build_feed_group(
+                    TemplateSource::Inline("unused".into()),
+                    vec!["item.id".into()],
+                    None,
+                ),
+                vec!["item.id".into()],
+                "item.content.body or item.summary.content or ''",
+            )
+        };
+        let feed_group = build();
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-1", "Title", Some("Summary"));
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+        assert_eq!(
+            renderer.diff_input(&ctx)?.expect("diff input").1,
+            "<p>Body</p>"
+        );
+
+        let mut summary_only = item.clone();
+        summary_only.content = None;
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &summary_only,
+        };
+        assert_eq!(renderer.diff_input(&ctx)?.expect("diff input").1, "Summary");
+
+        let mut nothing = summary_only.clone();
+        nothing.summary = None;
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &nothing,
+        };
+        assert_eq!(renderer.diff_input(&ctx)?.expect("diff input").1, "");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_content_maps_none_to_empty_rather_than_the_word_none() -> Result<()> {
+        let feed_group = with_diff(
+            build_feed_group(
+                TemplateSource::Inline("unused".into()),
+                vec!["item.id".into()],
+                None,
+            ),
+            vec!["item.id".into()],
+            "item.summary",
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, item) = sample_feed_and_item("item-1", "Title", None);
+        let ctx = FeedItemContext {
+            feed: &feed,
+            item: &item,
+        };
+
+        assert_eq!(renderer.diff_input(&ctx)?.expect("diff input").1, "");
         Ok(())
     }
 
