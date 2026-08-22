@@ -12,7 +12,7 @@ blake3 = "=1.8.5"
 chrono = "=0.4.45"
 color-eyre = "=0.6.5"
 env_logger = "=0.11.11"
-feed-rs = "=2.3.1"
+feed-rs = "=2.4.0"
 humantime = "=2.4.0"
 humantime-serde = "=1.1.1"
 lettre = { version = "=0.11.22", default-features = false, features = ["builder", "pool", "smtp-transport", "serde", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
