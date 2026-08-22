@@ -334,7 +334,7 @@ impl<'a> CompiledFilter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FeedGroup, Settings, TemplateSource};
+    use crate::config::{DEFAULT_DIFF_CONTENT, FeedGroup, Settings, TemplateSource};
     use crate::diff::{DiffContext, DiffContextKeyword, DiffGranularity, DiffOptions};
     use crate::feed::FeedItemContext;
     use chrono::TimeDelta;
@@ -696,6 +696,42 @@ mod tests {
         };
 
         assert_eq!(renderer.diff_input(&ctx)?.expect("diff input").1, "");
+        Ok(())
+    }
+
+    #[test]
+    fn default_diff_content_covers_the_title_and_the_body() -> Result<()> {
+        let feed_group = with_diff(
+            build_feed_group(
+                TemplateSource::Inline("unused".into()),
+                vec!["item.id".into()],
+                None,
+            ),
+            vec!["item.id".into()],
+            DEFAULT_DIFF_CONTENT,
+        );
+        let renderer = Renderer::from_feed(&feed_group)?;
+
+        let (feed, mut item) = sample_feed_and_item("item-1", "Title", Some("Summary"));
+        let content = renderer
+            .diff_input(&FeedItemContext {
+                feed: &feed,
+                item: &item,
+            })?
+            .expect("diff input")
+            .1;
+        assert_eq!(content, "Title\n<p>Body</p>");
+
+        // A titleless item keeps the body intact instead of prefixing the word "none".
+        item.title = None;
+        let content = renderer
+            .diff_input(&FeedItemContext {
+                feed: &feed,
+                item: &item,
+            })?
+            .expect("diff input")
+            .1;
+        assert_eq!(content, "\n<p>Body</p>");
         Ok(())
     }
 

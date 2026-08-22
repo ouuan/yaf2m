@@ -68,7 +68,7 @@ digest-body = <src/templates/digest-body.html>
 template-args = {}
 update-key = 'item.id'
 diff-keys = []
-diff-content = "item.content.body or item.summary.content or ''"
+diff-content = "item.title.content ~ '\\n' ~ (item.content.body or item.summary.content or '')"
 diff-granularity = 'word'
 diff-context = 'auto'
 diff-strip-tags = false
@@ -97,7 +97,7 @@ url = "https://blog.rust-lang.org/feed.xml"
 # template-args.tz = "Asia/Shanghai"
 # update-keys = ['item.title', 'item.content | capture("<main>([\\s\\S]*?)</main>", 1)']
 # diff-key = 'item.id' is the same as diff-keys = ['item.id']
-# diff-content = 'item.title.content'
+# diff-content = 'item.content.body' # diff the body only, ignoring title changes
 # diff-granularity = 'line'
 # diff-context = 5
 # diff-strip-tags = true
@@ -160,7 +160,7 @@ feeds.filter.any = [
     -   The stored content is overwritten only when the item is actually notified, so `item.diff` always covers everything since the last mail about that item.
     -   `diff-keys` should be stable across all URLs of a feed group, since items are deduplicated across the group.
     -   Changing `diff-content` or `diff-keys` makes the previously stored content unreachable, so the next notification shows no diff rather than a bogus one. The stale rows expire under `keep-old`.
--   `diff-content`: MiniJinja expression for the text that is stored and diffed. An absent value is stored as an empty string. Note that MiniJinja's lenient undefined behavior only tolerates one level, so `item.content.body` is fine when `item.content` is `none`, but `item.content.body.foo` errors.
+-   `diff-content`: MiniJinja expression for the text that is stored and diffed. By default this is the item title, a newline, and the content body (or the summary), so that a retitled item shows the rename instead of an unexplained mail. An absent value is stored as an empty string. Note that MiniJinja's lenient undefined behavior only tolerates one level, so `item.content.body` is fine when `item.content` is `none`, but `item.content.body.foo` errors.
 -   `diff-granularity`: The unit changes are computed on, which also determines the layout.
     -   `word` (default) / `char`: an inline redline, i.e. the text in reading order with insertions and deletions marked in place.
     -   `line`: a unified diff, i.e. only the changed regions, with `@@` headers and `-`/`+` lines.

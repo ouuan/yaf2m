@@ -21,7 +21,11 @@ const DEFAULT_DIGEST_SUBJECT: &str = include_str!("templates/digest-subject.txt"
 const DEFAULT_ITEM_BODY: &str = include_str!("templates/item-body.html");
 const DEFAULT_DIGEST_BODY: &str = include_str!("templates/digest-body.html");
 const DEFAULT_UPDATE_KEY: &str = "item.id";
-const DEFAULT_DIFF_CONTENT: &str = "item.content.body or item.summary.content or ''";
+// The title leads the diffed text so that a retitled item shows the rename rather than an
+// unexplained mail. A titleless item leaves `item.title.content` undefined, which `~` concatenates
+// as an empty string, so it needs no guard of its own.
+pub const DEFAULT_DIFF_CONTENT: &str =
+    r"item.title.content ~ '\n' ~ (item.content.body or item.summary.content or '')";
 const DEFAULT_DIFF_GRANULARITY: DiffGranularity = DiffGranularity::Word;
 const DEFAULT_DIFF_CONTEXT: DiffContext = DiffContext::Keyword(DiffContextKeyword::Auto);
 const DEFAULT_DIFF_STRIP_TAGS: bool = false;
