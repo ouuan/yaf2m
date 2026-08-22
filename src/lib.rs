@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod diff;
 mod email;
+mod escape;
 mod feed;
 mod render;
 mod worker;

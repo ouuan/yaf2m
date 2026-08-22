@@ -1,3 +1,4 @@
+use crate::escape::push_escaped_text;
 use minijinja_contrib::filters::striptags;
 use regex::Regex;
 use serde::Deserialize;
@@ -86,7 +87,7 @@ const ELLIPSIS: &str = r#"<span style="color: #999;"> … </span>"#;
 /// Returns `None` when there is nothing worth showing: the two sides are equal, no change survived
 /// the requested context, or the input is too large to diff.
 ///
-/// Every byte of `old`/`new` that reaches the output goes through [`push_escaped_str`]; the only
+/// Every byte of `old`/`new` that reaches the output goes through [`push_escaped_text`]; the only
 /// markup emitted is this function's own wrappers. Callers render the result with `| safe`, so
 /// this is the sole trust boundary.
 pub fn render_diff(old: &str, new: &str, opts: DiffOptions) -> Option<String> {
@@ -230,7 +231,7 @@ fn unified_hunks(diff: &TextDiff<'_, '_, str>, context: Option<usize>) -> Option
             };
             out.push_str(open);
             out.push(prefix);
-            push_escaped_str(&mut out, line);
+            push_escaped_text(&mut out, line);
             out.push_str(close);
             out.push('\n');
         }
@@ -245,26 +246,7 @@ fn unified_hunks(diff: &TextDiff<'_, '_, str>, context: Option<usize>) -> Option
 
 fn push_escaped(out: &mut String, tokens: &[&str]) {
     for token in tokens {
-        push_escaped_str(out, token);
-    }
-}
-
-/// Escape feed text for a text node.
-///
-/// Everything this module emits feed text into is element content — never an attribute value, a
-/// `<script>`/`<style>` raw-text element, or a URL — and the mail is sent as `text/html;
-/// charset=utf-8`, so escaping `&<>` is what makes the text inert. The quotes cost nothing and
-/// keep the output safe if it ever ends up in an attribute.
-fn push_escaped_str(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
+        push_escaped_text(out, token);
     }
 }
 
