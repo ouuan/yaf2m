@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT content, update_hash, first_seen FROM feed_item_contents\n        WHERE urls_hash = $1 AND diff_hash = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "update_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "update_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "first_seen",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "first_seen"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "a3600a09c0ba52a0c70c058fc03135f7090814ae1fe580e185f74179ea8bae72"
+}

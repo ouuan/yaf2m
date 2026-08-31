@@ -55,10 +55,15 @@ img { max-width: 100%; height: auto; }
   </div>
 
   <div class="content" style="margin: 0.75rem 0;">
-    {% if item.diff %}
+    {% if item.diff or item.reverted %}
       <div class="diff-section" style="margin-bottom: 1rem;">
-        <div style="color: #666; font-size: 0.9em; font-weight: bold; margin-bottom: 0.375rem;">✏️ Changes since the last email</div>
-        {{ item.diff | safe }}
+        <div style="color: #666; font-size: 0.9em; font-weight: bold; margin-bottom: 0.375rem;">
+          {%- if item.reverted %}⏪ Reverted{% if item.diff %} · {% endif %}{% endif -%}
+          {%- if item.diff %}✏️ Changes since the last email
+            {%- if item.diff_from %} ({{ item.diff_from | datetimeformat(format="short", tz=template_args.tz or "UTC") }} → {{ item.diff_to | datetimeformat(format="short", tz=template_args.tz or "UTC") }}){% endif -%}
+          {% endif -%}
+        </div>
+        {% if item.diff %}{{ item.diff | safe }}{% endif %}
       </div>
     {% endif %}
     {% if item.content and item.content.body %}

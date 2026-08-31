@@ -132,18 +132,27 @@ pub async fn try_check_feed_group(
     .parse()
 }
 
+pub struct ItemUpsert {
+    pub new: bool,
+    /// When this version of the item was first seen, which for a revert is an older date than the
+    /// current cycle.
+    pub first_seen: DateTime<Utc>,
+}
+
 pub async fn upsert_and_check_item_new(
     e: impl PgExecutor<'_>,
     urls_hash: Hash,
     update_hash: Hash,
-) -> Result<bool> {
-    let new = sqlx::query_scalar!(
+) -> Result<ItemUpsert> {
+    // `first_seen` is deliberately absent from the `SET` list, so the conflict path returns the
+    // value from the original sighting of this version rather than the current time.
+    let row = sqlx::query!(
         r#"
-        INSERT INTO feed_items (urls_hash, update_hash, last_seen)
-        VALUES ($1, $2, $3)
+        INSERT INTO feed_items (urls_hash, update_hash, first_seen, last_seen)
+        VALUES ($1, $2, $3, $3)
         ON CONFLICT (urls_hash, update_hash) DO UPDATE
             SET last_seen = EXCLUDED.last_seen
-        RETURNING (xmax = 0) as "new!"
+        RETURNING (xmax = 0) AS "new!", first_seen AS "first_seen!"
         "#,
         urls_hash.as_bytes(),
         update_hash.as_bytes(),
@@ -151,7 +160,10 @@ pub async fn upsert_and_check_item_new(
     )
     .fetch_one(e)
     .await?;
-    Ok(new)
+    Ok(ItemUpsert {
+        new: row.new,
+        first_seen: row.first_seen,
+    })
 }
 
 pub async fn delete_old_items(
@@ -171,39 +183,85 @@ pub async fn delete_old_items(
     Ok(())
 }
 
-/// Store `content` under `(urls_hash, diff_hash)` and return the content it replaced.
+/// The content stored under one `(urls_hash, diff_hash)`, i.e. the "before" side of a diff.
+pub struct StoredContent {
+    pub content: String,
+    /// The version this content came from. `NULL` for rows written before the column existed,
+    /// where it reads as "unknown" rather than "a different version".
+    pub update_hash: Option<Hash>,
+    /// A cache of the `feed_items.first_seen` of [`Self::update_hash`], written in lockstep with
+    /// it so it cannot drift. Unlike a join back onto `feed_items`, it survives that row being
+    /// pruned by `keep-old`.
+    pub first_seen: Option<DateTime<Utc>>,
+}
+
+pub async fn get_item_content(
+    e: impl PgExecutor<'_>,
+    urls_hash: Hash,
+    diff_hash: Hash,
+) -> Result<Option<StoredContent>> {
+    sqlx::query!(
+        r#"
+        SELECT content, update_hash, first_seen FROM feed_item_contents
+        WHERE urls_hash = $1 AND diff_hash = $2
+        "#,
+        urls_hash.as_bytes(),
+        diff_hash.as_bytes(),
+    )
+    .fetch_optional(e)
+    .await?
+    .map(|row| {
+        Ok(StoredContent {
+            content: row.content,
+            update_hash: row
+                .update_hash
+                .as_deref()
+                .map(Hash::from_slice)
+                .transpose()?,
+            first_seen: row.first_seen,
+        })
+    })
+    .transpose()
+}
+
+/// Store `content` under `(urls_hash, diff_hash)`, tagged with the version it came from.
 ///
 /// `overwrite = false` only seeds a missing row and touches `last_seen`, so the stored content
-/// always stays at whatever was last mailed out.
-pub async fn upsert_item_content(
+/// always stays at whatever was last mailed out. The touch is unconditional because it is what
+/// keeps the row alive against `keep-old`.
+pub async fn store_item_content(
     e: impl PgExecutor<'_>,
     urls_hash: Hash,
     diff_hash: Hash,
     content: &str,
+    update_hash: Hash,
+    first_seen: DateTime<Utc>,
     overwrite: bool,
-) -> Result<Option<String>> {
-    // `DO UPDATE` must stay unconditional: a `WHERE content IS DISTINCT FROM EXCLUDED.content`
-    // would return no row on a no-op and break `fetch_one`. The `"old_content?"` override is
-    // load-bearing too, since sqlx would otherwise infer `String` from the NOT NULL column and
-    // hit `UnexpectedNullError` on the first plain insert.
-    let old_content = sqlx::query_scalar!(
+) -> Result<()> {
+    sqlx::query!(
         r#"
-        INSERT INTO feed_item_contents (urls_hash, diff_hash, content, last_seen)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO feed_item_contents
+            (urls_hash, diff_hash, content, update_hash, first_seen, last_seen)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (urls_hash, diff_hash) DO UPDATE
-            SET content = CASE WHEN $5 THEN EXCLUDED.content ELSE feed_item_contents.content END,
+            SET content = CASE WHEN $7 THEN EXCLUDED.content ELSE feed_item_contents.content END,
+                update_hash =
+                    CASE WHEN $7 THEN EXCLUDED.update_hash ELSE feed_item_contents.update_hash END,
+                first_seen =
+                    CASE WHEN $7 THEN EXCLUDED.first_seen ELSE feed_item_contents.first_seen END,
                 last_seen = EXCLUDED.last_seen
-        RETURNING OLD.content AS "old_content?"
         "#,
         urls_hash.as_bytes(),
         diff_hash.as_bytes(),
         content,
+        update_hash.as_bytes(),
+        first_seen,
         Utc::now(),
         overwrite,
     )
-    .fetch_one(e)
+    .execute(e)
     .await?;
-    Ok(old_content)
+    Ok(())
 }
 
 pub async fn delete_old_item_contents(

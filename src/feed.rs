@@ -1,6 +1,7 @@
 use crate::config::Settings;
 use crate::escape::escape_text;
 use ammonia::{Url, UrlRelative};
+use chrono::{DateTime, Utc};
 use color_eyre::{Result, eyre::WrapErr};
 use feed_rs::model::{Content, Entry, Feed, Text};
 use ouroboros::self_referencing;
@@ -14,7 +15,7 @@ pub struct FeedItemContext<'a> {
     pub item: &'a Entry,
 }
 
-/// What the templates see: the same `{ feed, item }` shape, with `item.diff` grafted on.
+/// What the templates see: the same `{ feed, item }` shape, with the diff fields grafted on.
 #[derive(Debug, Serialize)]
 pub struct ItemRenderContext<'a> {
     pub feed: &'a Feed,
@@ -22,11 +23,21 @@ pub struct ItemRenderContext<'a> {
 }
 
 /// `Entry` has no rename/skip attributes, so flattening keeps every `item.*` field intact.
+///
+/// A `#[serde(flatten)]` collision is not an error, it just emits the key twice, so the names
+/// added here have to stay absent from `feed_rs::Entry`.
 #[derive(Debug, Serialize)]
 pub struct ItemWithDiff<'a> {
     #[serde(flatten)]
     pub entry: &'a Entry,
     pub diff: Option<String>,
+    /// When the version the diff starts from was first seen. Absent for content stored before
+    /// the version was recorded alongside it.
+    pub diff_from: Option<DateTime<Utc>>,
+    /// When the version being mailed was first seen. `Some` exactly when `diff` is.
+    pub diff_to: Option<DateTime<Utc>>,
+    /// Whether the content went back to an already-known version instead of moving to a new one.
+    pub reverted: bool,
 }
 
 #[self_referencing]

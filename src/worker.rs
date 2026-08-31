@@ -1,13 +1,13 @@
 use crate::config::{FeedGroup, load_config};
-use crate::db::{self, FeedStatus};
-use crate::diff::render_diff;
+use crate::db::{self, FeedStatus, StoredContent};
+use crate::diff::{DiffOptions, render_diff};
 use crate::email::{Mail, Mailer, send_email_with_backoff};
-use crate::feed::{ItemRenderContext, ItemWithDiff, fetch_feed};
+use crate::feed::{FeedItemContext, ItemRenderContext, ItemWithDiff, fetch_feed};
 use crate::render::{Renderer, TemplateName};
 use blake3::{Hash, Hasher};
 use chrono::{TimeDelta, Utc};
 use color_eyre::Result;
-use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::{WrapErr, eyre};
 use lettre::message::Mailbox;
 use minijinja::{Environment, render};
 use minijinja_contrib::add_to_environment;
@@ -180,6 +180,7 @@ impl Worker {
         all_feeds.reverse();
 
         let mut new_items = Vec::new();
+        let mut items_by_diff_hash = HashMap::new();
 
         for item in all_feeds.iter().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
@@ -191,40 +192,66 @@ impl Worker {
             }
 
             let update_hash = renderer.update_hash(item)?;
+            let diff_input = renderer.diff_input(item)?;
 
-            let new =
+            // Checked before anything is written: the rollback would undo the writes anyway, but
+            // this also skips rendering a diff for an item that is about to be discarded.
+            if let Some((diff_hash, _)) = &diff_input {
+                check_diff_key_collision(&mut items_by_diff_hash, *diff_hash, update_hash, *item)?;
+            }
+
+            let upsert =
                 db::upsert_and_check_item_new(&mut *tx, feed_group.urls_hash, update_hash).await?;
 
-            log::trace!(
-                "hash: {}, new: {}, item:\n{}",
-                update_hash,
-                new,
-                render!("{{ item }}", item => item.item)
-            );
+            let mut decision = ItemDecision::not_notified(upsert.new);
+            let mut diff_from = None;
 
-            // The stored content is overwritten only when the item is actually notified, so a
-            // diff always covers everything since the last mail about this item. The overwrite
-            // rides on this transaction, so a failed send leaves it for the next cycle.
-            let diff = match renderer.diff_input(item)? {
-                Some((diff_hash, content)) => db::upsert_item_content(
+            if let Some((diff_hash, content)) = diff_input {
+                let stored =
+                    db::get_item_content(&mut *tx, feed_group.urls_hash, diff_hash).await?;
+                decision = decide_item(
+                    upsert.new,
+                    update_hash,
+                    stored.as_ref(),
+                    &content,
+                    feed_group.settings.diff_options,
+                );
+                if decision.diff.is_some() {
+                    diff_from = stored.as_ref().and_then(|s| s.first_seen);
+                }
+                // The stored content is overwritten only when the item is actually notified, so a
+                // diff always covers everything since the last mail about this item. The overwrite
+                // rides on this transaction, so a failed send leaves it for the next cycle.
+                db::store_item_content(
                     &mut *tx,
                     feed_group.urls_hash,
                     diff_hash,
                     &content,
-                    new,
+                    update_hash,
+                    upsert.first_seen,
+                    decision.notify,
                 )
-                .await?
-                .filter(|_| new)
-                .and_then(|old| render_diff(&old, &content, feed_group.settings.diff_options)),
-                None => None,
-            };
+                .await?;
+            }
 
-            if new {
+            log::trace!(
+                "hash: {}, new: {}, reverted: {}, item:\n{}",
+                update_hash,
+                upsert.new,
+                decision.reverted,
+                render!("{{ item }}", item => item.item)
+            );
+
+            if decision.notify {
+                let diff_to = decision.diff.is_some().then_some(upsert.first_seen);
                 new_items.push(ItemRenderContext {
                     feed: item.feed,
                     item: ItemWithDiff {
                         entry: item.item,
-                        diff,
+                        diff: decision.diff,
+                        diff_from,
+                        diff_to,
+                        reverted: decision.reverted,
                     },
                 });
             }
@@ -234,15 +261,18 @@ impl Worker {
             new_items.sort_by_key(|c| Reverse(c.item.entry.updated.or(c.item.entry.published)));
         }
 
+        let reverted_count = new_items.iter().filter(|c| c.item.reverted).count();
+
         log::log!(
             if new_items.is_empty() {
                 log::Level::Debug
             } else {
                 log::Level::Info
             },
-            "Feed group {:?}: {} new items found",
+            "Feed group {:?}: {} new items and {} reverted items found",
             feed_group.urls,
-            new_items.len()
+            new_items.len() - reverted_count,
+            reverted_count,
         );
 
         // Send emails
@@ -271,7 +301,15 @@ impl Worker {
                 new_items
                     .iter()
                     .map(|item| {
-                        let subject = renderer.render(TemplateName::ItemSubject, item)?;
+                        let subject_prefix = if item.item.reverted {
+                            "[Reverted] "
+                        } else {
+                            ""
+                        };
+                        let subject = format!(
+                            "{subject_prefix}{}",
+                            renderer.render(TemplateName::ItemSubject, item)?
+                        );
                         let body = renderer.render(TemplateName::ItemBody, item)?;
                         Ok(Mail { subject, body })
                     })
@@ -314,6 +352,89 @@ impl Worker {
 
         Ok(())
     }
+}
+
+/// What one item is worth reporting, once its stored content has been read back.
+struct ItemDecision {
+    diff: Option<String>,
+    reverted: bool,
+    notify: bool,
+}
+
+impl ItemDecision {
+    /// The verdict for an item with no `diff-keys` configured, where nothing but a new
+    /// `update_hash` can trigger a mail.
+    fn not_notified(new: bool) -> Self {
+        Self {
+            diff: None,
+            reverted: false,
+            notify: new,
+        }
+    }
+}
+
+/// Decide whether to mail about an item and what diff to show, without touching the database.
+///
+/// A revert is version-based, not content-based: the stored content has to have come from a
+/// *different* `update_hash` than the current one. Content-based detection would flag every change
+/// that `update-keys` deliberately ignores — a title-only edit under the canonical
+/// `update-keys = ['item.id', 'item.content.body']`, say — and would break the invariant that the
+/// stored content is whatever was last mailed out.
+fn decide_item(
+    new: bool,
+    update_hash: Hash,
+    stored: Option<&StoredContent>,
+    content: &str,
+    opts: DiffOptions,
+) -> ItemDecision {
+    // The diff is rendered only for a notification candidate, so the common "nothing to report"
+    // path keeps costing nothing.
+    let candidate = new || stored.is_some_and(|s| s.update_hash.is_some_and(|h| h != update_hash));
+    let diff = candidate
+        .then(|| stored.and_then(|s| render_diff(&s.content, content, opts)))
+        .flatten();
+    // Gating the revert on a rendered diff is load-bearing: `render_diff` also returns `None` for
+    // equal sides, oversized input, and — under `diff-strip-tags` — changes that were pure markup.
+    // Mailing "[Reverted]" with no diff would show the full current content of an item the user
+    // has already seen, with no explanation. A new `update_hash` still always mails, diff or not.
+    let reverted = !new && diff.is_some();
+    ItemDecision {
+        diff,
+        reverted,
+        notify: new || reverted,
+    }
+}
+
+/// Fail the whole feed group when two distinct items collapse onto one `diff_hash`.
+///
+/// They would otherwise overwrite each other's stored content every cycle and diff one item
+/// against the other, silently. Fed from every filtered item rather than only the ones that reach
+/// the database, so which cycle first observes the clash does not change the outcome.
+fn check_diff_key_collision<'a>(
+    seen: &mut HashMap<Hash, (Hash, FeedItemContext<'a>)>,
+    diff_hash: Hash,
+    update_hash: Hash,
+    item: FeedItemContext<'a>,
+) -> Result<()> {
+    // The same item repeated across the URLs of a group hashes to the same pair, which is fine.
+    let Some((other_update_hash, other)) = seen.insert(diff_hash, (update_hash, item)) else {
+        return Ok(());
+    };
+    if other_update_hash == update_hash {
+        return Ok(());
+    }
+    let title = |ctx: &FeedItemContext| ctx.item.title.as_ref().map(|t| t.content.clone());
+    Err(eyre!(
+        "Two items share the diff key hash {diff_hash}:\n\
+         - update hash {other_update_hash}, id {other_id:?}, title {other_title:?}\n\
+         - update hash {update_hash}, id {id:?}, title {title:?}\n\
+         `diff-keys` has to identify one item uniquely across every URL of the group, otherwise \
+         the two would overwrite each other's stored content and be diffed against each other.",
+        other_id = other.item.id,
+        other_title = title(&other),
+        id = item.item.id,
+        title = title(&item),
+    ))
 }
 
 struct FailureTracker {
@@ -433,4 +554,327 @@ impl FailureTracker {
 struct FailureCtx<'a> {
     urls: &'a [String],
     error: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::{DiffContext, DiffContextKeyword, DiffGranularity};
+    use chrono::{DateTime, TimeZone};
+    use feed_rs::model::{Entry, Feed, FeedType, Text};
+    use minijinja::Value;
+    use std::collections::BTreeMap;
+
+    fn hash_of(s: &str) -> Hash {
+        blake3::hash(s.as_bytes())
+    }
+
+    fn time(month: u32, day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, month, day, 5, 6, 0).unwrap()
+    }
+
+    fn options(strip_tags: bool) -> DiffOptions {
+        DiffOptions {
+            granularity: DiffGranularity::Word,
+            context: DiffContext::Keyword(DiffContextKeyword::Auto),
+            strip_tags,
+        }
+    }
+
+    fn stored(content: &str, update_hash: Option<Hash>) -> StoredContent {
+        StoredContent {
+            content: content.into(),
+            update_hash,
+            first_seen: Some(time(1, 2)),
+        }
+    }
+
+    fn sample_feed() -> Feed {
+        Feed {
+            feed_type: FeedType::RSS2,
+            id: "https://example.com/feed.xml".into(),
+            title: None,
+            updated: None,
+            authors: Vec::new(),
+            description: None,
+            links: Vec::new(),
+            categories: Vec::new(),
+            contributors: Vec::new(),
+            generator: None,
+            icon: None,
+            language: None,
+            logo: None,
+            published: None,
+            rating: None,
+            rights: None,
+            ttl: None,
+            entries: Vec::new(),
+        }
+    }
+
+    fn sample_entry(id: &str, title: &str) -> Entry {
+        Entry {
+            id: id.into(),
+            title: Some(Text {
+                content_type: "text/plain".parse().unwrap(),
+                src: None,
+                content: title.into(),
+            }),
+            updated: None,
+            authors: Vec::new(),
+            content: None,
+            links: Vec::new(),
+            summary: None,
+            categories: Vec::new(),
+            contributors: Vec::new(),
+            published: None,
+            source: None,
+            rights: None,
+            media: Vec::new(),
+            language: None,
+            base: None,
+        }
+    }
+
+    #[test]
+    fn a_new_version_mails_with_a_diff_against_the_stored_content() {
+        let decision = decide_item(
+            true,
+            hash_of("v2"),
+            Some(&stored("old text", Some(hash_of("v1")))),
+            "new text",
+            options(false),
+        );
+
+        assert!(decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_some());
+    }
+
+    #[test]
+    fn a_new_version_mails_even_with_nothing_stored_to_diff_against() {
+        let decision = decide_item(true, hash_of("v1"), None, "new text", options(false));
+
+        assert!(decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+    }
+
+    #[test]
+    fn an_unchanged_known_version_is_skipped() {
+        let v1 = hash_of("v1");
+        let decision = decide_item(
+            false,
+            v1,
+            Some(&stored("same text", Some(v1))),
+            "same text",
+            options(false),
+        );
+
+        assert!(!decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+    }
+
+    /// A title-only edit under body-based `update-keys`: the content moved but the version did
+    /// not. Skipping it also leaves the stored content alone, so the rename accumulates into the
+    /// diff of the next real update.
+    #[test]
+    fn a_change_the_update_keys_ignore_is_skipped() {
+        let v1 = hash_of("v1");
+        let decision = decide_item(
+            false,
+            v1,
+            Some(&stored("Old title\nbody", Some(v1))),
+            "New title\nbody",
+            options(false),
+        );
+
+        assert!(!decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+    }
+
+    #[test]
+    fn going_back_to_an_already_known_version_is_a_revert() {
+        let decision = decide_item(
+            false,
+            hash_of("v1"),
+            Some(&stored("v2 text", Some(hash_of("v2")))),
+            "v1 text",
+            options(false),
+        );
+
+        assert!(decision.notify);
+        assert!(decision.reverted);
+        assert!(decision.diff.is_some());
+    }
+
+    /// Rows stored before the version was recorded alongside them cannot prove a revert, so they
+    /// stay silent until the next notification overwrites them.
+    #[test]
+    fn a_stored_row_of_unknown_version_is_skipped() {
+        let decision = decide_item(
+            false,
+            hash_of("v1"),
+            Some(&stored("v2 text", None)),
+            "v1 text",
+            options(false),
+        );
+
+        assert!(!decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+    }
+
+    /// Without the "only when a diff renders" gate, this would mail a `[Reverted]` whose body is
+    /// the full current content with no diff and no explanation.
+    #[test]
+    fn a_revert_with_nothing_to_show_is_skipped() {
+        let decision = decide_item(
+            false,
+            hash_of("v1"),
+            Some(&stored("<p>same</p>", Some(hash_of("v2")))),
+            "<div>same</div>",
+            options(true),
+        );
+
+        assert!(!decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+    }
+
+    #[test]
+    fn one_item_repeated_across_urls_is_not_a_diff_key_collision() {
+        let feed = sample_feed();
+        let entry = sample_entry("item-1", "Title");
+        let item = FeedItemContext {
+            feed: &feed,
+            item: &entry,
+        };
+        let mut seen = HashMap::new();
+
+        check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap();
+        check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap();
+    }
+
+    #[test]
+    fn two_items_sharing_a_diff_key_fail_the_group() {
+        let feed = sample_feed();
+        let first = sample_entry("item-1", "First");
+        let second = sample_entry("item-2", "Second");
+        let mut seen = HashMap::new();
+
+        check_diff_key_collision(
+            &mut seen,
+            hash_of("key"),
+            hash_of("v1"),
+            FeedItemContext {
+                feed: &feed,
+                item: &first,
+            },
+        )
+        .unwrap();
+        let error = check_diff_key_collision(
+            &mut seen,
+            hash_of("key"),
+            hash_of("v2"),
+            FeedItemContext {
+                feed: &feed,
+                item: &second,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("item-1"), "{error}");
+        assert!(error.contains("item-2"), "{error}");
+        assert!(error.contains("First"), "{error}");
+        assert!(error.contains("Second"), "{error}");
+        assert!(error.contains("diff-keys"), "{error}");
+    }
+
+    fn render_default_item_body(feed: &Feed, item: ItemWithDiff) -> String {
+        let mut env = Environment::new();
+        add_to_environment(&mut env);
+        env.add_global(
+            "template_args",
+            Value::from_serialize(BTreeMap::<&str, &str>::new()),
+        );
+        env.add_template("item-body.html", include_str!("templates/item-body.html"))
+            .expect("failed to add the default item body template");
+        env.get_template("item-body.html")
+            .expect("failed to load the default item body template")
+            .render(ItemRenderContext { feed, item })
+            .expect("failed to render the default item body template")
+    }
+
+    /// The span runs backwards for a revert, which is the whole signal.
+    #[test]
+    fn the_default_item_body_marks_a_revert_and_spans_the_two_versions() {
+        let feed = sample_feed();
+        let entry = sample_entry("item-1", "Title");
+
+        let rendered = render_default_item_body(
+            &feed,
+            ItemWithDiff {
+                entry: &entry,
+                diff: Some("<div>the diff</div>".into()),
+                diff_from: Some(time(3, 4)),
+                diff_to: Some(time(1, 2)),
+                reverted: true,
+            },
+        );
+
+        assert!(rendered.contains("⏪ Reverted"), "{rendered}");
+        assert!(
+            rendered.contains("(2026-03-04 05:06 → 2026-01-02 05:06)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("<div>the diff</div>"), "{rendered}");
+    }
+
+    #[test]
+    fn the_default_item_body_omits_the_span_when_the_stored_version_is_unknown() {
+        let feed = sample_feed();
+        let entry = sample_entry("item-1", "Title");
+
+        let rendered = render_default_item_body(
+            &feed,
+            ItemWithDiff {
+                entry: &entry,
+                diff: Some("<div>the diff</div>".into()),
+                diff_from: None,
+                diff_to: Some(time(1, 2)),
+                reverted: false,
+            },
+        );
+
+        assert!(
+            rendered.contains("Changes since the last email"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains('→'), "{rendered}");
+        assert!(!rendered.contains('⏪'), "{rendered}");
+    }
+
+    /// `#[serde(flatten)]` has to keep the `Entry` fields reachable alongside the added ones.
+    #[test]
+    fn the_item_context_exposes_the_entry_fields_next_to_the_diff_fields() {
+        let entry = sample_entry("item-1", "Title");
+        let value = Value::from_serialize(ItemWithDiff {
+            entry: &entry,
+            diff: Some("<div>the diff</div>".into()),
+            diff_from: Some(time(3, 4)),
+            diff_to: Some(time(1, 2)),
+            reverted: true,
+        });
+
+        let attr = |name: &str| value.get_attr(name).expect("missing attribute");
+        assert_eq!(attr("id").as_str(), Some("item-1"));
+        assert_eq!(attr("diff").as_str(), Some("<div>the diff</div>"));
+        assert_eq!(attr("diff_from").as_str(), Some("2026-03-04T05:06:00Z"));
+        assert_eq!(attr("diff_to").as_str(), Some("2026-01-02T05:06:00Z"));
+        assert!(attr("reverted").is_true());
+    }
 }

@@ -129,13 +129,18 @@ feeds.filter.any = [
 
 -   `to`, `cc`, `bcc`: Mail recipients. Each can be a single string or an array of strings.
 -   `digest`: Whether to send all updates in a single digest mail or to send one mail per item. Newly added feeds and updates triggered by configuration changes (e.g. `update-keys` or `filter`) are always sent in digests.
+    -   Subject prefixes: a digest may be prefixed with `[New Feed] ` (the group was not in the database yet) or `[New Criteria] ` (`urls`, `update-keys` or `filter` changed), and a per-item mail with `[Reverted] ` (see `diff-keys`). `[Reverted] ` never appears on a digest subject; reverted entries are marked in the digest body instead, via `item.reverted`.
 -   `max-mails-per-check`: Send digest if there are too many updates, even if `digest = false`.
 -   `item-subject`, `digest-subject`, `item-body`, `digest-body`: [MiniJinja](https://docs.rs/minijinja) templates for mail contents.
     -   Can be `{ inline = "{{ template }}" }` or `{ file = "/path/to/template" }`.
     -   Default templates: [`src/templates`](./src/templates).
     -   Context for single item: `{ feed => Feed, item => Entry }`, see [`feed_rs::model::Feed`](https://docs.rs/feed-rs/latest/feed_rs/model/struct.Feed.html) and [`feed_rs::model::Entry`](https://docs.rs/feed-rs/latest/feed_rs/model/struct.Entry.html).
     -   Context for digest: `{ feeds => [Feed], items => [{ feed => Feed, item => Entry }] }`, where `feeds` are all feeds in the group (no matter updated or not), and `items` are updated items.
-    -   `item.diff` is an extra field alongside the `Entry` fields: a pre-escaped HTML string when `diff-keys` is set and the stored content changed, `none` otherwise. It is already escaped, so render it with `{{ item.diff | safe }}`.
+    -   Extra fields alongside the `Entry` fields, all of them for single items and digest `items`:
+        -   `item.diff`: a pre-escaped HTML string when `diff-keys` is set and the stored content changed, `none` otherwise. It is already escaped, so render it with `{{ item.diff | safe }}`.
+        -   `item.diff_from`: when the version the diff starts from was first seen. Absent when `item.diff` is, and also for content that was stored before yaf2m recorded the version alongside it.
+        -   `item.diff_to`: when the version being mailed was first seen. Present exactly when `item.diff` is. For a revert this is *earlier* than `item.diff_from`.
+        -   `item.reverted`: whether the content went back to an already-known version instead of moving to a new one. See `diff-keys`.
     -   Custom args: `template-args`.
     -   Can include each other, e.g. `{% include "item-body.html" %}`, `{% include "digest-subject.txt" %}`.
     -   More features:
@@ -158,8 +163,12 @@ feeds.filter.any = [
         ```
 
     -   The stored content is overwritten only when the item is actually notified, so `item.diff` always covers everything since the last mail about that item.
-    -   `diff-keys` should be stable across all URLs of a feed group, since items are deduplicated across the group.
+    -   `diff-keys` must identify one item uniquely across every URL of a feed group within one check, since items are deduplicated across the group. Two different items sharing a key would overwrite each other's stored content and be diffed against each other, so this now fails the whole feed group with an error naming both items.
     -   Changing `diff-content` or `diff-keys` makes the previously stored content unreachable, so the next notification shows no diff rather than a bogus one. The stale rows expire under `keep-old`.
+    -   **Reverts**: when the content goes back to a version that `update-keys` has already seen, there is no new update to notify about, but the page did visibly change. Such an item is mailed with a `[Reverted] ` subject prefix, and `item.diff_to` is *older* than `item.diff_from`. This needs `diff-keys`, and it stays silent when:
+        -   `update-keys` did not change, i.e. the content moved but the version did not. A title-only edit under `update-keys = ['item.id', 'item.content.body']` shows up in the diff of the next real update instead.
+        -   there is nothing to render: the content is byte-identical, it is too large to diff, or `diff-strip-tags = true` and only the markup differed.
+        -   the content was stored before yaf2m started recording which version it came from, i.e. by a version older than this feature. That row stays quiet until the next notification overwrites it.
 -   `diff-content`: MiniJinja expression for the text that is stored and diffed. By default this is the item title, a newline, and the content body (or the summary), so that a retitled item shows the rename instead of an unexplained mail. An absent value is stored as an empty string. Note that MiniJinja's lenient undefined behavior only tolerates one level, so `item.content.body` is fine when `item.content` is `none`, but `item.content.body.foo` errors.
 -   `diff-granularity`: The unit changes are computed on, which also determines the layout.
     -   `word` (default) / `char`: an inline redline, i.e. the text in reading order with insertions and deletions marked in place.
@@ -167,7 +176,7 @@ feeds.filter.any = [
 -   `diff-context`: How much unchanged context to keep around each change, in units of `diff-granularity`; longer unchanged runs are elided with `…`. Can be a non-negative integer, `'full'` (no elision), or `'auto'` (the default: 30 words / 120 characters / 3 lines).
 -   `diff-strip-tags`: Whether to strip HTML tags to readable text before diffing. This only affects the display; the stored content is unaffected, so this can be flipped at any time. Off by default, which diffs the HTML source.
 -   `interval`: Check feed update once per interval.
--   `keep-old`: Prune old data in the database. This includes the item contents stored for `diff-keys` — the only table that holds feed content rather than hashes, which is why `diff-keys` is off by default.
+-   `keep-old`: Prune old data in the database. This includes the item contents stored for `diff-keys` — the only table that holds feed content rather than hashes, which is why `diff-keys` is off by default. Pruning also forgets which versions have been seen, so a revert to a version older than `keep-old` arrives as a normal mail rather than a `[Reverted] ` one.
 -   `timeout`: Timeout when fetching the feed.
 -   `retry-count`: Number of consecutive failures before a feed group is considered failing.
 -   `retry-interval`: Minimum wait after a failure before retrying a failing feed group. By default (`0s`), failing feeds are retried every check cycle (about once per minute).
