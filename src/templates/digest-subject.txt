@@ -5,5 +5,5 @@
     )
   )
 %}{%
-  set date = now() | dateformat(format="short", tz=template_args.tz or "UTC")
-%}[{{ date }}] {{ items | length }} new item{{ items | pluralize }} from {{ feed_title }}
+  set date = now() | datetimeformat(format="short", tz=template_args.tz or "UTC")
+%}{{ items | length }} new item{{ items | pluralize }} from {{ feed_title }} [{{ date }}]
