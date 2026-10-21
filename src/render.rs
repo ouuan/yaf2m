@@ -382,6 +382,8 @@ mod tests {
                     strip_tags: false,
                 },
                 interval: TimeDelta::hours(1),
+                revert_window: TimeDelta::hours(6),
+                revert_stable_for: TimeDelta::hours(3),
                 keep_old: TimeDelta::weeks(1),
                 timeout: Duration::from_secs(30),
                 max_mails_per_check: 5,

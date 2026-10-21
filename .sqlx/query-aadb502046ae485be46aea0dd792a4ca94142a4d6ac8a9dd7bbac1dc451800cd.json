@@ -1,0 +1,113 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT content, update_hash, first_seen,\n            observed_hash, stable_since, stable_count, recent_reverts, suppressing\n        FROM feed_item_contents\n        WHERE urls_hash = $1 AND diff_hash = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "update_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "update_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "first_seen",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "first_seen"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "observed_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "observed_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "stable_since",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "stable_since"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "stable_count",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "stable_count"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "recent_reverts",
+        "type_info": "TimestamptzArray",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "recent_reverts"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "suppressing",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "feed_item_contents",
+            "name": "suppressing"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "aadb502046ae485be46aea0dd792a4ca94142a4d6ac8a9dd7bbac1dc451800cd"
+}

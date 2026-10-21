@@ -4,6 +4,7 @@ use crate::diff::{DiffOptions, render_diff};
 use crate::email::{Mail, Mailer, send_email_with_backoff};
 use crate::feed::{FeedItemContext, ItemRenderContext, ItemWithDiff, fetch_feed};
 use crate::render::{Renderer, TemplateName};
+use crate::revert::RevertState;
 use blake3::{Hash, Hasher};
 use chrono::{TimeDelta, Utc};
 use color_eyre::Result;
@@ -164,6 +165,10 @@ impl Worker {
             return Ok(());
         }
 
+        if status == FeedStatus::NewCriteria {
+            db::reset_revert_states(&mut *tx, feed_group.urls_hash).await?;
+        }
+
         let renderer = Renderer::from_feed(feed_group)?;
 
         let mut all_feeds = Vec::new();
@@ -181,6 +186,7 @@ impl Worker {
 
         let mut new_items = Vec::new();
         let mut items_by_diff_hash = HashMap::new();
+        let checked_at = Utc::now();
 
         for item in all_feeds.iter().flat_map(|feed| feed.borrow_items()) {
             if !renderer.filter(item)? {
@@ -197,7 +203,16 @@ impl Worker {
             // Checked before anything is written: the rollback would undo the writes anyway, but
             // this also skips rendering a diff for an item that is about to be discarded.
             if let Some((diff_hash, _)) = &diff_input {
-                check_diff_key_collision(&mut items_by_diff_hash, *diff_hash, update_hash, *item)?;
+                // A duplicate across feed URLs is one observation, not another stability sample.
+                // Still check collisions first so conflicting versions fail the whole group.
+                if !check_diff_key_collision(
+                    &mut items_by_diff_hash,
+                    *diff_hash,
+                    update_hash,
+                    *item,
+                )? {
+                    continue;
+                }
             }
 
             let upsert =
@@ -216,6 +231,26 @@ impl Worker {
                     &content,
                     feed_group.settings.diff_options,
                 );
+                let mut revert_state = stored
+                    .as_ref()
+                    .map(|s| s.revert_state.clone())
+                    .unwrap_or_default();
+                let was_reverted = decision.reverted;
+                decision.observe(
+                    &mut revert_state,
+                    update_hash,
+                    checked_at,
+                    feed_group.settings.revert_window,
+                    feed_group.settings.revert_stable_for,
+                );
+                if was_reverted && !decision.reverted {
+                    log::debug!(
+                        "Feed group {:?}, item {}: suppressed unstable revert to {}",
+                        feed_group.urls,
+                        item.item.id,
+                        update_hash,
+                    );
+                }
                 if decision.diff.is_some() {
                     diff_from = stored.as_ref().and_then(|s| s.first_seen);
                 }
@@ -232,6 +267,8 @@ impl Worker {
                     decision.notify,
                 )
                 .await?;
+                db::store_revert_state(&mut *tx, feed_group.urls_hash, diff_hash, &revert_state)
+                    .await?;
             }
 
             log::trace!(
@@ -362,6 +399,19 @@ struct ItemDecision {
 }
 
 impl ItemDecision {
+    fn observe(
+        &mut self,
+        state: &mut RevertState,
+        update_hash: Hash,
+        now: chrono::DateTime<Utc>,
+        window: TimeDelta,
+        stable_for: TimeDelta,
+    ) {
+        if !state.observe(update_hash, self.reverted, now, window, stable_for) && self.reverted {
+            *self = Self::not_notified(false);
+        }
+    }
+
     /// The verdict for an item with no `diff-keys` configured, where nothing but a new
     /// `update_hash` can trigger a mail.
     fn not_notified(new: bool) -> Self {
@@ -410,18 +460,19 @@ fn decide_item(
 /// They would otherwise overwrite each other's stored content every cycle and diff one item
 /// against the other, silently. Fed from every filtered item rather than only the ones that reach
 /// the database, so which cycle first observes the clash does not change the outcome.
+/// Returns `true` only for the first observation of the item in this check.
 fn check_diff_key_collision<'a>(
     seen: &mut HashMap<Hash, (Hash, FeedItemContext<'a>)>,
     diff_hash: Hash,
     update_hash: Hash,
     item: FeedItemContext<'a>,
-) -> Result<()> {
+) -> Result<bool> {
     // The same item repeated across the URLs of a group hashes to the same pair, which is fine.
     let Some((other_update_hash, other)) = seen.insert(diff_hash, (update_hash, item)) else {
-        return Ok(());
+        return Ok(true);
     };
     if other_update_hash == update_hash {
-        return Ok(());
+        return Ok(false);
     }
     let title = |ctx: &FeedItemContext| ctx.item.title.as_ref().map(|t| t.content.clone());
     Err(eyre!(
@@ -586,6 +637,7 @@ mod tests {
             content: content.into(),
             update_hash,
             first_seen: Some(time(1, 2)),
+            revert_state: Default::default(),
         }
     }
 
@@ -744,6 +796,92 @@ mod tests {
         assert!(decision.diff.is_none());
     }
 
+    /// Simulate successful checks, committing the observed state every time but moving the diff
+    /// baseline only for a mail. This exercises the same decision path used by `process_feed`.
+    fn check_version(
+        baseline: &mut StoredContent,
+        version: &str,
+        new: bool,
+        hour: i64,
+    ) -> ItemDecision {
+        let hash = hash_of(version);
+        let mut decision = decide_item(new, hash, Some(baseline), version, options(false));
+        let now = time(10, 21) + TimeDelta::hours(hour);
+        decision.observe(
+            &mut baseline.revert_state,
+            hash,
+            now,
+            TimeDelta::hours(6),
+            TimeDelta::hours(3),
+        );
+        if decision.notify {
+            baseline.content = version.into();
+            baseline.update_hash = Some(hash);
+        }
+        decision
+    }
+
+    fn flapping_baseline() -> StoredContent {
+        let mut baseline = stored("A", Some(hash_of("A")));
+        assert!(check_version(&mut baseline, "B", true, 0).notify);
+        assert!(check_version(&mut baseline, "A", false, 1).reverted);
+        assert!(check_version(&mut baseline, "B", false, 2).reverted);
+        assert!(!check_version(&mut baseline, "A", false, 3).notify);
+        assert_eq!(baseline.content, "B");
+        assert!(baseline.revert_state.suppressing);
+        baseline
+    }
+
+    #[test]
+    fn a_stable_revert_is_mailed_once_against_the_last_mailed_version() {
+        let mut baseline = flapping_baseline();
+        assert!(!check_version(&mut baseline, "A", false, 4).notify);
+        assert_eq!(baseline.content, "B");
+        let decision = check_version(&mut baseline, "A", false, 6);
+        assert!(decision.reverted);
+        assert!(decision.diff.unwrap().contains('B'));
+        assert_eq!(baseline.content, "A");
+        assert!(!baseline.revert_state.suppressing);
+        assert!(!check_version(&mut baseline, "A", false, 7).notify);
+    }
+
+    #[test]
+    fn stabilizing_at_the_last_mailed_version_is_silent() {
+        let mut baseline = flapping_baseline();
+        for hour in 4..=7 {
+            assert!(!check_version(&mut baseline, "B", false, hour).notify);
+        }
+        assert!(!baseline.revert_state.suppressing);
+        assert!(baseline.revert_state.recent_reverts.is_empty());
+        assert_eq!(baseline.content, "B");
+    }
+
+    #[test]
+    fn a_new_version_mails_during_suppression_without_clearing_it() {
+        let mut baseline = flapping_baseline();
+        let decision = check_version(&mut baseline, "C", true, 4);
+        assert!(decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.unwrap().contains('B'));
+        assert_eq!(baseline.content, "C");
+        assert!(baseline.revert_state.suppressing);
+        assert!(!check_version(&mut baseline, "A", false, 5).notify);
+        assert!(!check_version(&mut baseline, "A", false, 6).notify);
+        let decision = check_version(&mut baseline, "A", false, 8);
+        assert!(decision.reverted);
+        assert!(decision.diff.unwrap().contains('C'));
+    }
+
+    #[test]
+    fn a_new_hash_always_mails_even_without_a_visible_diff_during_suppression() {
+        let mut baseline = flapping_baseline();
+        let decision = check_version(&mut baseline, "B", true, 4);
+        assert!(decision.notify);
+        assert!(!decision.reverted);
+        assert!(decision.diff.is_none());
+        assert!(baseline.revert_state.suppressing);
+    }
+
     #[test]
     fn one_item_repeated_across_urls_is_not_a_diff_key_collision() {
         let feed = sample_feed();
@@ -754,8 +892,8 @@ mod tests {
         };
         let mut seen = HashMap::new();
 
-        check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap();
-        check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap();
+        assert!(check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap());
+        assert!(!check_diff_key_collision(&mut seen, hash_of("key"), hash_of("v1"), item).unwrap());
     }
 
     #[test]

@@ -72,6 +72,8 @@ diff-content = "item.title.content ~ '\\n' ~ (item.content.body or item.summary.
 diff-granularity = 'word'
 diff-context = 'auto'
 diff-strip-tags = false
+revert-window = '6h'
+revert-stable-for = '3h'
 interval = '1h'
 keep-old = '1w'
 timeout = '30s'
@@ -101,6 +103,8 @@ url = "https://blog.rust-lang.org/feed.xml"
 # diff-granularity = 'line'
 # diff-context = 5
 # diff-strip-tags = true
+# revert-window = '12h'
+# revert-stable-for = '6h'
 # interval = '1d'
 # keep-old = '2w'
 # timeout = '1m'
@@ -169,12 +173,19 @@ feeds.filter.any = [
         -   `update-keys` did not change, i.e. the content moved but the version did not. A title-only edit under `update-keys = ['item.id', 'item.content.body']` shows up in the diff of the next real update instead.
         -   there is nothing to render: the content is byte-identical, it is too large to diff, or `diff-strip-tags = true` and only the markup differed.
         -   the content was stored before yaf2m started recording which version it came from, i.e. by a version older than this feature. That row stays quiet until the next notification overwrites it.
+    -   **Repeated reverts / CDN inconsistency**: the first two historical-version transitions within `revert-window` notify immediately. The third starts suppressing revert notifications for that item. For example, `A → B (new) → A → B → A` starts suppression at the last `A`. Repeated observations of the same version do not count as transitions. Only transitions that qualify for a visible revert count.
+        -   During suppression, a version must be observed in at least three consecutive successful checks and remain unchanged for at least `revert-stable-for`. Version changes restart this confirmation. Failed checks and checks where the item is absent do not add observations; duplicate items across URLs in one check count once.
+        -   Once stable, a version different from the last mailed one produces one revert notification; the same version resumes normal checking silently. Either outcome clears the transition history.
+        -   New versions always notify immediately, including during suppression, and do not by themselves clear suppression. Suppressed observations never replace the last mailed content, so subsequent diffs still cover changes since the last email.
+        -   Observation state survives restarts and is reset when the group's update criteria change. Brief real reverts during suppression may be merged; content alone cannot distinguish a real rollback from a stale CDN response.
 -   `diff-content`: MiniJinja expression for the text that is stored and diffed. By default this is the item title, a newline, and the content body (or the summary), so that a retitled item shows the rename instead of an unexplained mail. An absent value is stored as an empty string. Note that MiniJinja's lenient undefined behavior only tolerates one level, so `item.content.body` is fine when `item.content` is `none`, but `item.content.body.foo` errors.
 -   `diff-granularity`: The unit changes are computed on, which also determines the layout.
     -   `word` (default) / `char`: an inline redline, i.e. the text in reading order with insertions and deletions marked in place.
     -   `line`: a unified diff, i.e. only the changed regions, with `@@` headers and `-`/`+` lines.
 -   `diff-context`: How much unchanged context to keep around each change, in units of `diff-granularity`; longer unchanged runs are elided with `…`. Can be a non-negative integer, `'full'` (no elision), or `'auto'` (the default: 30 words / 120 characters / 3 lines).
 -   `diff-strip-tags`: Whether to strip HTML tags to readable text before diffing. This only affects the display; the stored content is unaffected, so this can be flipped at any time. Off by default, which diffs the HTML source.
+-   `revert-window`: Rolling window for detecting repeated historical-version transitions for one item. Default: `'6h'`. Must be positive. The third transition within the window starts suppression; once active, suppression continues until a version stabilizes, even after the window expires.
+-   `revert-stable-for`: Minimum time one observed version must remain unchanged before ending suppression, in addition to at least three consecutive observations. Default: `'3h'`. Must be positive. Changing either revert setting preserves observation state and applies the new duration without triggering `[New Criteria]`. Both settings require `diff-keys` to have an effect.
 -   `interval`: Check feed update once per interval.
 -   `keep-old`: Prune old data in the database. This includes the item contents stored for `diff-keys` — the only table that holds feed content rather than hashes, which is why `diff-keys` is off by default. Pruning also forgets which versions have been seen, so a revert to a version older than `keep-old` arrives as a normal mail rather than a `[Reverted] ` one.
 -   `timeout`: Timeout when fetching the feed.

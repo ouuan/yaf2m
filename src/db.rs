@@ -1,5 +1,6 @@
 use crate::config::FeedGroup;
 use crate::escape::escape_text;
+use crate::revert::RevertState;
 use blake3::Hash;
 use chrono::{DateTime, TimeDelta, Utc};
 use color_eyre::Result;
@@ -193,6 +194,7 @@ pub struct StoredContent {
     /// it so it cannot drift. Unlike a join back onto `feed_items`, it survives that row being
     /// pruned by `keep-old`.
     pub first_seen: Option<DateTime<Utc>>,
+    pub revert_state: RevertState,
 }
 
 pub async fn get_item_content(
@@ -202,7 +204,9 @@ pub async fn get_item_content(
 ) -> Result<Option<StoredContent>> {
     sqlx::query!(
         r#"
-        SELECT content, update_hash, first_seen FROM feed_item_contents
+        SELECT content, update_hash, first_seen,
+            observed_hash, stable_since, stable_count, recent_reverts, suppressing
+        FROM feed_item_contents
         WHERE urls_hash = $1 AND diff_hash = $2
         "#,
         urls_hash.as_bytes(),
@@ -219,6 +223,17 @@ pub async fn get_item_content(
                 .map(Hash::from_slice)
                 .transpose()?,
             first_seen: row.first_seen,
+            revert_state: RevertState {
+                observed_hash: row
+                    .observed_hash
+                    .as_deref()
+                    .map(Hash::from_slice)
+                    .transpose()?,
+                stable_since: row.stable_since,
+                stable_count: row.stable_count,
+                recent_reverts: row.recent_reverts,
+                suppressing: row.suppressing,
+            },
         })
     })
     .transpose()
@@ -278,6 +293,52 @@ pub async fn delete_old_item_contents(
     .execute(e)
     .await?;
     log_deletion("feed item contents", result, cutoff);
+    Ok(())
+}
+
+/// Persist observations even when a notification was suppressed. Called in the same transaction
+/// as the content write and mail send, so a failed check cannot consume a transition.
+pub async fn store_revert_state(
+    e: impl PgExecutor<'_>,
+    urls_hash: Hash,
+    diff_hash: Hash,
+    state: &RevertState,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE feed_item_contents
+        SET observed_hash = $3, stable_since = $4, stable_count = $5,
+            recent_reverts = $6, suppressing = $7
+        WHERE urls_hash = $1 AND diff_hash = $2
+        "#,
+        urls_hash.as_bytes(),
+        diff_hash.as_bytes(),
+        state
+            .observed_hash
+            .as_ref()
+            .map(|hash| hash.as_bytes().as_slice()),
+        state.stable_since,
+        state.stable_count,
+        &state.recent_reverts,
+        state.suppressing,
+    )
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+pub async fn reset_revert_states(e: impl PgExecutor<'_>, urls_hash: Hash) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE feed_item_contents
+        SET observed_hash = NULL, stable_since = NULL, stable_count = 0,
+            recent_reverts = '{}', suppressing = FALSE
+        WHERE urls_hash = $1
+        "#,
+        urls_hash.as_bytes(),
+    )
+    .execute(e)
+    .await?;
     Ok(())
 }
 
@@ -370,4 +431,135 @@ fn log_deletion(name: &str, result: PgQueryResult, cutoff: DateTime<Utc>) {
         log::Level::Info
     };
     log::log!(level, "Deleted {count} {name} older than {cutoff}",);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    /// Run only against a disposable PostgreSQL database. This exercises the actual migration,
+    /// persistence across connections, and transaction boundary used around mail sends.
+    #[tokio::test]
+    #[ignore = "requires a disposable database in YAF2M_TEST_DATABASE_URL"]
+    async fn revert_state_migration_persistence_and_rollback() -> Result<()> {
+        let url = std::env::var("YAF2M_TEST_DATABASE_URL")?;
+        let pool = PgPool::connect(&url).await?;
+        init_db(&pool).await?;
+        let urls_hash = blake3::hash(Utc::now().to_rfc3339().as_bytes());
+        let other_group = blake3::hash(urls_hash.as_bytes());
+        let diff_hash = blake3::hash(b"item");
+        let version = blake3::hash(b"A");
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 0, 0, 0).unwrap();
+        let mut tx = pool.begin().await?;
+        for group in [urls_hash, other_group] {
+            sqlx::query(
+                "INSERT INTO feed_groups (urls_hash, last_check, last_seen) VALUES ($1, $2, $2)",
+            )
+            .bind(group.as_bytes().as_slice())
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+            store_item_content(&mut *tx, group, diff_hash, "A", version, now, true).await?;
+        }
+        // Downgrade and upgrade a populated table: existing notification baselines survive and
+        // begin with an empty observation history rather than a fabricated one.
+        sqlx::raw_sql(include_str!(
+            "../migrations/20261021000000_revert_suppression.down.sql"
+        ))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::raw_sql(include_str!(
+            "../migrations/20261021000000_revert_suppression.up.sql"
+        ))
+        .execute(&mut *tx)
+        .await?;
+        let legacy = get_item_content(&mut *tx, urls_hash, diff_hash)
+            .await?
+            .unwrap();
+        assert_eq!(legacy.content, "A");
+        assert_eq!(legacy.update_hash, Some(version));
+        assert_eq!(legacy.first_seen, Some(now));
+        assert_eq!(legacy.revert_state, RevertState::default());
+
+        let state = RevertState {
+            observed_hash: Some(blake3::hash(b"B")),
+            stable_since: Some(now),
+            stable_count: 2,
+            recent_reverts: vec![now - TimeDelta::hours(1), now],
+            suppressing: true,
+        };
+        for group in [urls_hash, other_group] {
+            store_revert_state(&mut *tx, group, diff_hash, &state).await?;
+        }
+        // A suppressed observation updates state but leaves all notification metadata intact.
+        store_item_content(
+            &mut *tx,
+            urls_hash,
+            diff_hash,
+            "B",
+            blake3::hash(b"B"),
+            now,
+            false,
+        )
+        .await?;
+        tx.commit().await?;
+        pool.close().await;
+
+        let pool = PgPool::connect(&url).await?;
+        let restored = get_item_content(&pool, urls_hash, diff_hash)
+            .await?
+            .unwrap();
+        assert_eq!(restored.revert_state, state);
+        assert_eq!(restored.content, "A");
+        assert_eq!(restored.update_hash, Some(version));
+        assert_eq!(restored.first_seen, Some(now));
+
+        let mut tx = pool.begin().await?;
+        let update_hash = blake3::hash(b"uncommitted version");
+        assert!(
+            upsert_and_check_item_new(&mut *tx, urls_hash, update_hash)
+                .await?
+                .new
+        );
+        store_item_content(&mut *tx, urls_hash, diff_hash, "C", update_hash, now, true).await?;
+        store_revert_state(&mut *tx, urls_hash, diff_hash, &RevertState::default()).await?;
+        // A failed mail send rolls back both state and the baseline, and keeps a new version new.
+        tx.rollback().await?;
+        let restored = get_item_content(&pool, urls_hash, diff_hash)
+            .await?
+            .unwrap();
+        assert_eq!(restored.content, "A");
+        assert_eq!(restored.revert_state, state);
+        let mut tx = pool.begin().await?;
+        assert!(
+            upsert_and_check_item_new(&mut *tx, urls_hash, update_hash)
+                .await?
+                .new
+        );
+        tx.rollback().await?;
+
+        reset_revert_states(&pool, urls_hash).await?;
+        let reset = get_item_content(&pool, urls_hash, diff_hash)
+            .await?
+            .unwrap();
+        assert_eq!(reset.revert_state, RevertState::default());
+        assert_eq!(reset.content, "A");
+        assert_eq!(reset.update_hash, Some(version));
+        assert_eq!(
+            get_item_content(&pool, other_group, diff_hash)
+                .await?
+                .unwrap()
+                .revert_state,
+            state,
+        );
+        for group in [urls_hash, other_group] {
+            sqlx::query("DELETE FROM feed_groups WHERE urls_hash = $1")
+                .bind(group.as_bytes().as_slice())
+                .execute(&pool)
+                .await?;
+        }
+        pool.close().await;
+        Ok(())
+    }
 }

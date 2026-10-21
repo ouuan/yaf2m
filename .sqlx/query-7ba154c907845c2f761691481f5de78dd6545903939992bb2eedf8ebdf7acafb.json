@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE feed_item_contents\n        SET observed_hash = $3, stable_since = $4, stable_count = $5,\n            recent_reverts = $6, suppressing = $7\n        WHERE urls_hash = $1 AND diff_hash = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Timestamptz",
+        "Int4",
+        "TimestamptzArray",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7ba154c907845c2f761691481f5de78dd6545903939992bb2eedf8ebdf7acafb"
+}

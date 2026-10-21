@@ -5,6 +5,7 @@ mod email;
 mod escape;
 mod feed;
 mod render;
+mod revert;
 mod worker;
 
 use crate::email::Mailer;

@@ -29,6 +29,8 @@ pub const DEFAULT_DIFF_CONTENT: &str =
 const DEFAULT_DIFF_GRANULARITY: DiffGranularity = DiffGranularity::Word;
 const DEFAULT_DIFF_CONTEXT: DiffContext = DiffContext::Keyword(DiffContextKeyword::Auto);
 const DEFAULT_DIFF_STRIP_TAGS: bool = false;
+const DEFAULT_REVERT_WINDOW: TimeDelta = TimeDelta::hours(6);
+const DEFAULT_REVERT_STABLE_FOR: TimeDelta = TimeDelta::hours(3);
 const DEFAULT_INTERVAL: TimeDelta = TimeDelta::hours(1);
 const DEFAULT_KEEP_OLD: TimeDelta = TimeDelta::weeks(1);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -94,6 +96,8 @@ pub struct Settings {
     pub diff_keys: Arc<[String]>,
     pub diff_content: Arc<str>,
     pub diff_options: DiffOptions,
+    pub revert_window: TimeDelta,
+    pub revert_stable_for: TimeDelta,
     pub interval: TimeDelta,
     pub keep_old: TimeDelta,
     pub timeout: Duration,
@@ -219,6 +223,10 @@ struct OptionalSettings {
     diff_granularity: Option<DiffGranularity>,
     diff_context: Option<DiffContext>,
     diff_strip_tags: Option<bool>,
+    #[serde_as(as = "Option<PositiveHumanTimeDelta>")]
+    revert_window: Option<TimeDelta>,
+    #[serde_as(as = "Option<PositiveHumanTimeDelta>")]
+    revert_stable_for: Option<TimeDelta>,
     #[serde_as(as = "Option<HumanTimeDelta>")]
     interval: Option<TimeDelta>,
     #[serde_as(as = "Option<HumanTimeDelta>")]
@@ -275,6 +283,8 @@ impl OptionalSettings {
                 context: self.diff_context.unwrap_or(DEFAULT_DIFF_CONTEXT),
                 strip_tags: self.diff_strip_tags.unwrap_or(DEFAULT_DIFF_STRIP_TAGS),
             },
+            revert_window: self.revert_window.unwrap_or(DEFAULT_REVERT_WINDOW),
+            revert_stable_for: self.revert_stable_for.unwrap_or(DEFAULT_REVERT_STABLE_FOR),
             interval: self.interval.unwrap_or(DEFAULT_INTERVAL),
             keep_old: self.keep_old.unwrap_or(DEFAULT_KEEP_OLD),
             timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
@@ -350,6 +360,11 @@ impl FeedConfig {
                 .unwrap_or(global.diff_options.strip_tags),
         };
         let interval = self.settings.interval.unwrap_or(global.interval);
+        let revert_window = self.settings.revert_window.unwrap_or(global.revert_window);
+        let revert_stable_for = self
+            .settings
+            .revert_stable_for
+            .unwrap_or(global.revert_stable_for);
         let keep_old = self.settings.keep_old.unwrap_or(global.keep_old);
         let timeout = self.settings.timeout.unwrap_or(global.timeout);
         let max_mails_per_check = self
@@ -414,6 +429,8 @@ impl FeedConfig {
                 diff_keys,
                 diff_content,
                 diff_options,
+                revert_window,
+                revert_stable_for,
                 interval,
                 keep_old,
                 timeout,
@@ -435,6 +452,19 @@ serde_conv!(
     |s: String| -> Result<_> {
         let duration = humantime::parse_duration(&s)?;
         Ok(TimeDelta::from_std(duration)?)
+    }
+);
+
+serde_conv!(
+    PositiveHumanTimeDelta,
+    TimeDelta,
+    |_| { "serialization unimplemented" },
+    |s: String| -> Result<_> {
+        let duration = TimeDelta::from_std(humantime::parse_duration(&s)?)?;
+        if duration <= TimeDelta::zero() {
+            return Err(eyre!("duration must be positive"));
+        }
+        Ok(duration)
     }
 );
 
@@ -585,6 +615,42 @@ mod tests {
 
         assert_eq!(hash_of(""), hash_of("diff-key = 'item.id'"));
         assert_eq!(hash_of(""), hash_of("diff-context = 1"));
+        assert_eq!(hash_of(""), hash_of("revert-window = '12h'"));
+        assert_eq!(hash_of(""), hash_of("revert-stable-for = '6h'"));
         assert_ne!(hash_of(""), hash_of("update-key = 'item.title'"));
+    }
+
+    #[test]
+    fn revert_settings_have_defaults_and_inherit_independently() {
+        let defaults = resolve_one("[[feeds]]\nurl = 'https://example.com/feed'");
+        assert_eq!(defaults.revert_window, TimeDelta::hours(6));
+        assert_eq!(defaults.revert_stable_for, TimeDelta::hours(3));
+        let settings = resolve_one(
+            r#"
+            [settings]
+            revert-window = '12h'
+            revert-stable-for = '6h'
+            [[feeds]]
+            url = 'https://example.com/feed'
+            revert-stable-for = '2h'
+            "#,
+        );
+        assert_eq!(settings.revert_window, TimeDelta::hours(12));
+        assert_eq!(settings.revert_stable_for, TimeDelta::hours(2));
+    }
+
+    #[test]
+    fn revert_settings_require_positive_durations() {
+        for key in ["revert-window", "revert-stable-for"] {
+            for value in ["0s", "-1h", "nonsense"] {
+                for prefix in ["[settings]", "[[feeds]]\nurl = 'https://example.com/feed'"] {
+                    assert!(
+                        toml::from_str::<ConfigFile>(&format!("{prefix}\n{key} = '{value}'"))
+                            .is_err(),
+                        "accepted {key} = {value} under {prefix}",
+                    );
+                }
+            }
+        }
     }
 }
