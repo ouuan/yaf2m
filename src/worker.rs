@@ -139,7 +139,7 @@ impl Worker {
                 })
                 .ok();
 
-            db::delete_old_failures(&this.pool, keep_old)
+            db::delete_old_failures(&this.pool, keep_old, &feed_hashes)
                 .await
                 .inspect_err(|e| {
                     log::error!("Failed to delete old failures: {e:?}");

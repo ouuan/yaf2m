@@ -389,11 +389,22 @@ pub async fn record_failure(e: impl PgExecutor<'_>, urls_hash: Hash, report: Rep
     Ok(())
 }
 
-pub async fn delete_old_failures(e: impl PgExecutor<'_>, keep_old: TimeDelta) -> Result<()> {
+/// Only failures of feed groups that are no longer in the config are pruned. A failure of a
+/// configured feed is either refreshed by the next failed attempt or cleared by a success, and
+/// the retry gate depends on it staying until `retry-interval` has passed.
+pub async fn delete_old_failures(
+    e: impl PgExecutor<'_>,
+    keep_old: TimeDelta,
+    groups_in_config: &[Vec<u8>],
+) -> Result<()> {
     let cutoff = saturating_sub_datetime(Utc::now(), keep_old);
-    let result = sqlx::query!("DELETE FROM failures WHERE fail_time < $1", cutoff)
-        .execute(e)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM failures WHERE fail_time < $1 AND NOT (urls_hash = ANY($2))",
+        cutoff,
+        groups_in_config,
+    )
+    .execute(e)
+    .await?;
     log_deletion("failures", result, cutoff);
     Ok(())
 }

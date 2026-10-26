@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM failures WHERE fail_time < $1 AND NOT (urls_hash = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d131ea2a3fa394be7c173f32fb09c3f2a61dfd74454c92696831033f38f0b56a"
+}
