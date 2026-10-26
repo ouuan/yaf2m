@@ -107,14 +107,14 @@ pub async fn try_check_feed_group(
                 )
             ON CONFLICT (urls_hash)
             DO UPDATE SET last_check = $3, criteria_hash = $2
-                WHERE (
-                        feed_groups.last_check < $4
-                        AND NOT EXISTS (
-                            SELECT 1 FROM failures
-                            WHERE failures.urls_hash = $1 AND failures.fail_time > $5
-                        )
+                WHERE NOT EXISTS (
+                        SELECT 1 FROM failures
+                        WHERE failures.urls_hash = $1 AND failures.fail_time > $5
                     )
-                    OR feed_groups.criteria_hash IS DISTINCT FROM $2
+                    AND (
+                        feed_groups.last_check < $4
+                        OR feed_groups.criteria_hash IS DISTINCT FROM $2
+                    )
             RETURNING
                 (xmax = 0) AS new_feed,
                 (OLD.criteria_hash IS DISTINCT FROM $2) AS new_criteria
