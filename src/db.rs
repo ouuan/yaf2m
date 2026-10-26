@@ -578,4 +578,143 @@ mod tests {
         pool.close().await;
         Ok(())
     }
+
+    fn test_feed_group(urls_hash: Hash, criteria: &str, retry_interval: TimeDelta) -> FeedGroup {
+        use crate::config::{Settings, TemplateSource};
+        use crate::diff::{DiffContext, DiffContextKeyword, DiffGranularity, DiffOptions};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let template = |s: &str| Arc::new(TemplateSource::Inline(s.into()));
+        FeedGroup {
+            urls_hash,
+            criteria_hash: blake3::hash(criteria.as_bytes()),
+            urls: vec!["https://example.com/rss".into()],
+            filter: None,
+            settings: Settings {
+                to: Vec::new().into(),
+                cc: Vec::new().into(),
+                bcc: Vec::new().into(),
+                digest: false,
+                item_subject: template("item-subject"),
+                digest_subject: template("digest-subject"),
+                item_body: template("item-body"),
+                digest_body: template("digest-body"),
+                template_args: Arc::new(minijinja::Value::from_serialize(
+                    std::collections::BTreeMap::<&str, &str>::new(),
+                )),
+                update_keys: Vec::new().into(),
+                diff_keys: Vec::new().into(),
+                diff_content: "".into(),
+                diff_options: DiffOptions {
+                    granularity: DiffGranularity::Word,
+                    context: DiffContext::Keyword(DiffContextKeyword::Auto),
+                    strip_tags: false,
+                },
+                revert_window: TimeDelta::hours(6),
+                revert_stable_for: TimeDelta::hours(3),
+                interval: TimeDelta::hours(1),
+                keep_old: TimeDelta::weeks(1),
+                timeout: Duration::from_secs(30),
+                max_mails_per_check: 5,
+                retry_count: 2,
+                retry_interval,
+                sanitize: true,
+                sort_by_last_modified: false,
+                http_headers: Default::default(),
+            },
+        }
+    }
+
+    async fn failure_rows(pool: &PgPool, urls_hash: Hash) -> Result<i64> {
+        Ok(
+            sqlx::query_scalar("SELECT COUNT(*) FROM failures WHERE urls_hash = $1")
+                .bind(urls_hash.as_bytes().as_slice())
+                .fetch_one(pool)
+                .await?,
+        )
+    }
+
+    /// One test rather than three: the pruning step deletes every unconfigured failure row in the
+    /// database, which would race with other tests that record failures.
+    ///
+    /// Run only against a disposable PostgreSQL database.
+    #[tokio::test]
+    #[ignore = "requires a disposable database in YAF2M_TEST_DATABASE_URL"]
+    async fn retry_interval_gates_checks_and_failure_pruning_keeps_configured_feeds() -> Result<()>
+    {
+        let url = std::env::var("YAF2M_TEST_DATABASE_URL")?;
+        let pool = PgPool::connect(&url).await?;
+        init_db(&pool).await?;
+        let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+        let hash_of = |label: &str| blake3::hash(format!("{label}-{nanos}").as_bytes());
+        let hour = TimeDelta::hours(1);
+
+        // A feed that never succeeded has no feed_groups row, but its failure still gates retries.
+        let fresh = hash_of("fresh");
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(fresh, "A", hour)).await?,
+            FeedStatus::NewFeed,
+            "the first attempt is a new feed",
+        );
+        // The worker's transaction rolls back on error, so no row survives; model that here.
+        sqlx::query("DELETE FROM feed_groups WHERE urls_hash = $1")
+            .bind(fresh.as_bytes().as_slice())
+            .execute(&pool)
+            .await?;
+        record_failure(&pool, fresh, eyre!("boom")).await?;
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(fresh, "A", hour)).await?,
+            FeedStatus::Wait,
+            "a never-succeeded feed must wait out retry-interval",
+        );
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feed_groups WHERE urls_hash = $1")
+            .bind(fresh.as_bytes().as_slice())
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(rows, 0, "waiting must not insert a feed_groups row");
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(fresh, "A", TimeDelta::zero())).await?,
+            FeedStatus::NewFeed,
+            "a zero retry-interval never waits",
+        );
+
+        // An established feed whose criteria changed must wait out retry-interval after a failure.
+        let established = hash_of("established");
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(established, "A", hour)).await?,
+            FeedStatus::NewFeed,
+        );
+        record_failure(&pool, established, eyre!("boom")).await?;
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(established, "B", hour)).await?,
+            FeedStatus::Wait,
+            "a criteria change must not bypass retry-interval",
+        );
+        assert_eq!(
+            try_check_feed_group(&pool, &test_feed_group(established, "B", TimeDelta::zero()))
+                .await?,
+            FeedStatus::NewCriteria,
+            "once the retry interval has passed the criteria change is applied",
+        );
+
+        // Pruning removes failures of feeds that left the config, never those still configured.
+        let removed = hash_of("removed");
+        record_failure(&pool, removed, eyre!("boom")).await?;
+        let configured = vec![fresh.as_bytes().to_vec(), established.as_bytes().to_vec()];
+        delete_old_failures(&pool, TimeDelta::zero(), &configured).await?;
+        assert_eq!(failure_rows(&pool, removed).await?, 0);
+        assert_eq!(failure_rows(&pool, fresh).await?, 1);
+        assert_eq!(failure_rows(&pool, established).await?, 1);
+
+        for group in [fresh, established, removed] {
+            clear_failure(&pool, group).await?;
+            sqlx::query("DELETE FROM feed_groups WHERE urls_hash = $1")
+                .bind(group.as_bytes().as_slice())
+                .execute(&pool)
+                .await?;
+        }
+        pool.close().await;
+        Ok(())
+    }
 }
