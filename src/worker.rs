@@ -54,6 +54,7 @@ impl Worker {
                 .modified()?;
             if modified != last_modified {
                 let config = load_config(&this.config_path).await?;
+                log::trace!("Loaded config: {config:#?}");
                 log::info!("Config file update reloaded");
                 feeds = config.feeds.into_iter().map(Arc::new).collect();
                 feed_map = feeds.iter().map(|feed| (feed.urls_hash, feed)).collect();
