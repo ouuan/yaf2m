@@ -99,7 +99,12 @@ pub async fn try_check_feed_group(
         r#"
         WITH upsert AS (
             INSERT INTO feed_groups (urls_hash, criteria_hash, last_check, last_seen)
-            VALUES ($1, $2, $3, $3)
+            SELECT $1::bytea, $2::bytea, $3::timestamptz, $3::timestamptz
+            WHERE EXISTS (SELECT 1 FROM feed_groups WHERE urls_hash = $1)
+                OR NOT EXISTS (
+                    SELECT 1 FROM failures
+                    WHERE failures.urls_hash = $1 AND failures.fail_time > $5
+                )
             ON CONFLICT (urls_hash)
             DO UPDATE SET last_check = $3, criteria_hash = $2
                 WHERE (
