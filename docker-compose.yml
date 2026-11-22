@@ -7,7 +7,7 @@ services:
     volumes:
       - ./config:/app/config
   db:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     env_file: .env
     volumes:
       - data:/var/lib/postgresql
